@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_compass/flutter_compass.dart';
-import 'package:camera/camera.dart';
+import 'package:torch_light/torch_light.dart';
 import '../utils/morse_code_translator.dart';
 
 class OfflineUtilityPage extends StatefulWidget {
@@ -16,9 +16,8 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // Camera/Flashlight State
-  CameraController? _cameraController;
-  bool _isCameraInitialized = false;
+  // Flashlight State
+  bool _isTorchAvailable = false;
 
   // Compass State
   double? _heading = 0;
@@ -33,7 +32,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _initializeCamera();
+    _checkTorchAvailability();
 
     // Compass Listener
     FlutterCompass.events?.listen((event) {
@@ -45,31 +44,13 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     });
   }
 
-  Future<void> _initializeCamera() async {
+  Future<void> _checkTorchAvailability() async {
     try {
-      final cameras = await availableCameras();
-      if (cameras.isNotEmpty) {
-        // Find back camera
-        final backCamera = cameras.firstWhere(
-          (camera) => camera.lensDirection == CameraLensDirection.back,
-          orElse: () => cameras.first,
-        );
-
-        _cameraController = CameraController(
-          backCamera,
-          ResolutionPreset.low,
-          enableAudio: false,
-        );
-
-        await _cameraController?.initialize();
-        if (mounted) {
-          setState(() {
-            _isCameraInitialized = true;
-          });
-        }
-      }
+      _isTorchAvailable = await TorchLight.isTorchAvailable();
+      if (mounted) setState(() {});
     } catch (e) {
-      debugPrint("Camera initialization failed: $e");
+      debugPrint("Torch availability check failed: $e");
+      _isTorchAvailable = false;
     }
   }
 
@@ -78,7 +59,6 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     _tabController.dispose();
     _messageController.dispose();
     _stopStrobe();
-    _cameraController?.dispose();
     super.dispose();
   }
 
@@ -95,12 +75,10 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     _strobeTimer = null;
 
     // Ensure off
-    if (_isCameraInitialized && _cameraController != null) {
-      try {
-        await _cameraController!.setFlashMode(FlashMode.off);
-      } catch (e) {
-        debugPrint("Error turning off flash: $e");
-      }
+    try {
+      await TorchLight.disableTorch();
+    } catch (e) {
+      debugPrint("Error turning off torch: $e");
     }
 
     if (mounted) {
@@ -111,14 +89,13 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   }
 
   Future<void> _startStrobe() async {
-    if (!_isCameraInitialized || _cameraController == null) {
-      // Try initializing again or show error
-      await _initializeCamera();
+    if (!_isTorchAvailable) {
+      await _checkTorchAvailability();
       if (!mounted) return;
 
-      if (!_isCameraInitialized) {
+      if (!_isTorchAvailable) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Camera/Flashlight not available")),
+          const SnackBar(content: Text("Flashlight not available")),
         );
         return;
       }
@@ -157,14 +134,14 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   }
 
   Future<void> _runStrobeSequence(List<_StrobeAction> actions) async {
-    if (!_isStrobing || _cameraController == null) return;
+    if (!_isStrobing) return;
 
     for (var action in actions) {
       if (!_isStrobing) break;
 
       if (action.isOn) {
         try {
-          await _cameraController!.setFlashMode(FlashMode.torch);
+          await TorchLight.enableTorch();
         } catch (_) {}
       }
 
@@ -172,7 +149,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
 
       if (action.isOn) {
         try {
-          await _cameraController!.setFlashMode(FlashMode.off);
+          await TorchLight.disableTorch();
         } catch (_) {}
       }
     }
