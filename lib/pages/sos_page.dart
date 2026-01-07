@@ -134,39 +134,68 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
         padding: const EdgeInsets.all(20.0),
         child: Column(
           children: [
-            // SOS Button Section
             const SizedBox(height: 20),
-            GestureDetector(
-              onTap: () {
-                debugPrint("SOS Pressed");
-              },
-              child: Container(
-                width: 150,
-                height: 150,
-                decoration: BoxDecoration(
-                  color: Colors.red,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.red.withAlpha(100),
-                      blurRadius: 20,
-                      spreadRadius: 5,
-                    ),
-                  ],
-                ),
-                child: const Center(
-                  child: Text(
-                    "SOS",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
+
+            // Merged SOS / Broadcast Button
+            AnimatedBuilder(
+              animation: _pulseAnimation,
+              builder: (context, child) {
+                return Transform.scale(
+                  scale: _isBroadcasting ? _pulseAnimation.value : 1.0,
+                  child: GestureDetector(
+                    onTap: _toggleBroadcast,
+                    child: Container(
+                      width: 180,
+                      height: 180,
+                      decoration: BoxDecoration(
+                        color: _isBroadcasting ? Colors.redAccent : Colors.red,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.red.withAlpha(
+                              _isBroadcasting ? 150 : 100,
+                            ),
+                            blurRadius: _isBroadcasting ? 30 : 20,
+                            spreadRadius: _isBroadcasting ? 10 : 5,
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _isBroadcasting ? Icons.stop : Icons.sensors,
+                              size: 40,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _isBroadcasting ? "STOP" : "SOS",
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (_isBroadcasting)
+                              const Text(
+                                "Broadcasting...",
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
-            const SizedBox(height: 30),
+
+            const SizedBox(height: 40),
 
             // Location Section
             Container(
@@ -215,88 +244,46 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
 
             // BLE Section
             Text(
-              "Bluetooth Broadcast",
+              "Bluetooth Broadcast Mode",
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
                 color: textColor,
               ),
             ),
+            const SizedBox(height: 8),
+            Text(
+              "Select the type of signal to broadcast when SOS is active.",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: subTextColor),
+            ),
             const SizedBox(height: 20),
 
             // Mode Selection
-            _buildRadioOption(
+            _buildCustomRadio(
               context,
-              title: "Legacy Advertising (BLE 4.x)",
+              title: "Standard Broadcast (BLE 4.x)",
               description:
-                  "• 2-byte header (Length & Type)\n• Channels: 37, 38, 39\n• Payload: ~31 bytes\n• Supported by nearly all devices.\n• Best for: Simple, basic broadcasting.",
+                  "Compatible with almost all smartphones. Sends a basic signal on 3 primary channels (37, 38, 39). Best for maximum reach.",
               value: BroadcastMode.legacy,
             ),
             const SizedBox(height: 15),
-            _buildRadioOption(
+            _buildCustomRadio(
               context,
-              title: "Extended Advertising (BLE 5.0+)",
+              title: "Enhanced Broadcast (BLE 5.0+)",
               description:
-                  "• Uses primary channels for header, data on 37 secondary channels.\n• Payload: Up to 255 bytes (1600+ with chaining).\n• Requires BLE 5.0+ scanner.\n• Best for: Rich sensor data, asset tracking, firmware.",
+                  "Sends larger data packets using secondary channels. Best for rich sensor data or asset tracking. Requires newer devices to detect.",
               value: BroadcastMode.extended,
             ),
 
             const SizedBox(height: 30),
-
-            // Broadcast Button
-            AnimatedBuilder(
-              animation: _pulseAnimation,
-              builder: (context, child) {
-                return Transform.scale(
-                  scale: _isBroadcasting ? _pulseAnimation.value : 1.0,
-                  child: child,
-                );
-              },
-              child: ElevatedButton.icon(
-                onPressed: _toggleBroadcast,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _isBroadcasting
-                      ? Colors.blueAccent
-                      : Colors.grey[800],
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 16,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  elevation: _isBroadcasting ? 10 : 2,
-                ),
-                icon: Icon(
-                  _isBroadcasting ? Icons.bluetooth_searching : Icons.bluetooth,
-                ),
-                label: Text(
-                  _isBroadcasting ? "STOP BROADCASTING" : "START BROADCAST",
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-            if (_isBroadcasting) ...[
-              const SizedBox(height: 10),
-              Text(
-                "Broadcasting ${_selectedMode == BroadcastMode.legacy ? "Legacy" : "Extended"} Signal...",
-                style: const TextStyle(
-                  color: Colors.blueAccent,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildRadioOption(
+  Widget _buildCustomRadio(
     BuildContext context, {
     required String title,
     required String description,
@@ -305,46 +292,67 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     final isSelected = _selectedMode == value;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: isSelected
-            ? (isDark ? Colors.blue.withAlpha(50) : Colors.blue.withAlpha(30))
-            : (isDark ? Colors.grey[900] : Colors.grey[100]),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isSelected ? Colors.blue : Colors.transparent,
-          width: 2,
-        ),
-      ),
-      child: RadioListTile<BroadcastMode>(
-        value: value,
-        groupValue: _selectedMode,
-        onChanged: _isBroadcasting
-            ? null // Disable changing during broadcast
-            : (BroadcastMode? val) {
-                setState(() {
-                  _selectedMode = val!;
-                });
-              },
-        title: Text(
-          title,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: isDark ? Colors.white : Colors.black,
+    return InkWell(
+      onTap: _isBroadcasting
+          ? null
+          : () {
+              setState(() {
+                _selectedMode = value;
+              });
+            },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isSelected
+              ? (isDark ? Colors.blue.withAlpha(40) : Colors.blue.withAlpha(20))
+              : (isDark ? Colors.grey[900] : Colors.grey[100]),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? Colors.blue : Colors.transparent,
+            width: 2,
           ),
         ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 8.0),
-          child: Text(
-            description,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.4,
-              color: isDark ? Colors.white70 : Colors.black87,
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2.0),
+              child: Icon(
+                isSelected
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_off,
+                color: isSelected ? Colors.blue : Colors.grey,
+                size: 24,
+              ),
             ),
-          ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    description,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.5,
+                      color: isDark ? Colors.white70 : Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        activeColor: Colors.blue,
       ),
     );
   }
