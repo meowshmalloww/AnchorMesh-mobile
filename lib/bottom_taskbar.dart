@@ -38,14 +38,15 @@ class CustomBottomBar extends StatelessWidget {
             children: [
               _buildNavBarItem(context, Icons.home_rounded, "Home", 0),
               _buildNavBarItem(context, Icons.map_rounded, "Map", 1),
+              _buildNavBarItem(context, Icons.build_rounded, "Offline", 2),
               _buildNavBarItem(
                 context,
                 Icons.support_rounded,
                 "SOS",
-                2,
+                3,
                 isSOS: true,
               ),
-              _buildNavBarItem(context, Icons.settings_rounded, "Settings", 3),
+              _buildNavBarItem(context, Icons.settings_rounded, "Settings", 4),
             ],
           ),
         ),
