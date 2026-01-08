@@ -49,5 +49,23 @@
 	<string>This app needs access to location when open to display your current coordinates for SOS purposes.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>This app needs access to location when open to display your current coordinates for SOS purposes.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app needs access to the flashlight for SOS strobe functionality.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app uses Bluetooth to send and relay SOS signals during emergencies, even when the app is in the background.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>This app broadcasts emergency SOS signals via Bluetooth to nearby devices.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.project_flutter.mesh.refresh</string>
+		<string>com.project_flutter.mesh.processing</string>
+	</array>
 </dict>
 </plist>

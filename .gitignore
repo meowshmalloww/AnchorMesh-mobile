@@ -44,3 +44,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Secure API Configuration (DO NOT COMMIT)
+lib/config/api_config.dart

@@ -1,15 +1,11 @@
-/// SOS Emergency Page
-/// Main UI for initiating and managing SOS alerts
-
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:provider/provider.dart';
-import '../models/sos_alert.dart';
-import '../models/device_info.dart';
-import '../services/sos/sos_manager.dart';
-
-/// Broadcast mode selection
-enum BroadcastMode { legacy, extended }
+import '../models/sos_packet.dart';
+import '../models/sos_status.dart';
+import '../services/ble_service.dart';
+import '../services/connectivity_service.dart';
+import '../utils/rssi_calculator.dart';
 
 class SOSPage extends StatefulWidget {
   const SOSPage({super.key});
@@ -19,343 +15,420 @@ class SOSPage extends StatefulWidget {
 }
 
 class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
-  String _locationMessage = "Tap below to get current location";
-  bool _isLoading = false;
-  bool _isInitializing = true;
+  // Location
+  String _locationMessage = "Tap to get location";
+  bool _isLoadingLocation = false;
+  double? _latitude;
+  double? _longitude;
 
-  // BLE Broadcast State
-  BroadcastMode _selectedMode = BroadcastMode.legacy;
-  EmergencyType _selectedEmergencyType = EmergencyType.other;
-  final TextEditingController _messageController = TextEditingController();
+  // BLE State
+  SOSStatus _selectedStatus = SOSStatus.sos;
+  bool _isBroadcasting = false;
+  BLEConnectionState _bleState = BLEConnectionState.idle;
+  AlertLevel _alertLevel = AlertLevel.peace;
+  final bool _isLowPowerMode = false;
 
-  // SOS Manager
-  late SOSManager _sosManager;
+  // Received packets
+  final List<SOSPacket> _receivedPackets = [];
 
   // Animation
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
+  // Services
+  final BLEService _bleService = BLEService.instance;
+  final DisasterMonitor _disasterMonitor = DisasterMonitor.instance;
+
+  // Subscriptions
+  StreamSubscription? _stateSubscription;
+  StreamSubscription? _packetSubscription;
+  StreamSubscription? _errorSubscription;
+  StreamSubscription? _alertSubscription;
+
   @override
   void initState() {
     super.initState();
+    _setupAnimation();
+    _setupListeners();
+    _loadActivePackets();
+  }
+
+  void _setupAnimation() {
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 1200),
     );
-    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.12).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
-
-    _initializeServices();
   }
 
-  Future<void> _initializeServices() async {
-    _sosManager = SOSManager(
-      config: const SOSManagerConfig(
-        serverBaseUrl: 'http://localhost:3000', // Update with your server URL
-      ),
-    );
+  void _setupListeners() {
+    _stateSubscription = _bleService.connectionState.listen((state) {
+      if (mounted) setState(() => _bleState = state);
+    });
 
-    // Create local device info
-    final deviceId = DateTime.now().millisecondsSinceEpoch.toString();
-    final localDevice = LocalDevice(
-      deviceId: deviceId,
-      platform: DevicePlatform.ios, // or android based on platform
-      appVersion: '1.0.0',
-      bleCapabilities: BleCapabilities(
-        supportsExtended: _selectedMode == BroadcastMode.extended,
-      ),
-    );
+    _packetSubscription = _bleService.onPacketReceived.listen((packet) {
+      if (mounted) {
+        setState(() {
+          // Update or add packet
+          final idx = _receivedPackets.indexWhere(
+            (p) => p.userId == packet.userId,
+          );
+          if (idx >= 0) {
+            _receivedPackets[idx] = packet;
+          } else {
+            _receivedPackets.insert(0, packet);
+          }
+        });
+        _showPacketNotification(packet);
+      }
+    });
 
-    await _sosManager.initialize(localDevice);
+    _errorSubscription = _bleService.onError.listen((error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error), backgroundColor: Colors.orange),
+        );
+      }
+    });
 
-    // Listen to state changes
-    _sosManager.addListener(_onSOSStateChanged);
+    _alertSubscription = _disasterMonitor.levelStream.listen((level) {
+      if (mounted) {
+        setState(() => _alertLevel = level);
+        if (level == AlertLevel.disaster) {
+          _autoActivateMesh();
+        }
+      }
+    });
+  }
 
+  Future<void> _loadActivePackets() async {
+    final packets = await _bleService.getActivePackets();
     if (mounted) {
-      setState(() {
-        _isInitializing = false;
-      });
+      setState(() => _receivedPackets.addAll(packets));
     }
   }
 
-  void _onSOSStateChanged() {
-    if (!mounted) return;
+  void _showPacketNotification(SOSPacket packet) {
+    final distance = _bleService.rssiCalculator.getSmoothedDistance(
+      packet.userId.toRadixString(16),
+    );
+    final distanceText = distance != null
+        ? ' • ${RSSICalculator.getProximityDescription(distance)}'
+        : '';
 
-    final state = _sosManager.state;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${packet.status.label} received$distanceText'),
+        backgroundColor: Color(packet.status.colorValue),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
 
-    // Update animation based on SOS state
-    if (state.isActive) {
-      _pulseController.repeat(reverse: true);
-    } else {
-      _pulseController.stop();
-      _pulseController.reset();
+  void _autoActivateMesh() async {
+    if (!_isBroadcasting && _latitude != null && _longitude != null) {
+      await _toggleBroadcast();
     }
-
-    setState(() {});
   }
 
   @override
   void dispose() {
     _pulseController.dispose();
-    _messageController.dispose();
-    _sosManager.removeListener(_onSOSStateChanged);
-    _sosManager.dispose();
+    _stateSubscription?.cancel();
+    _packetSubscription?.cancel();
+    _errorSubscription?.cancel();
+    _alertSubscription?.cancel();
     super.dispose();
   }
 
   Future<void> _getCurrentLocation() async {
     setState(() {
-      _isLoading = true;
-      _locationMessage = "Fetching location...";
+      _isLoadingLocation = true;
+      _locationMessage = "Fetching...";
     });
 
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      if (mounted) {
-        setState(() {
-          _locationMessage = "Location services are disabled.";
-          _isLoading = false;
-        });
-      }
-      return;
-    }
-
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
         if (mounted) {
           setState(() {
-            _locationMessage = "Location permissions are denied";
-            _isLoading = false;
+            _locationMessage = "Location disabled";
+            _isLoadingLocation = false;
           });
         }
         return;
       }
-    }
 
-    if (permission == LocationPermission.deniedForever) {
-      if (mounted) {
-        setState(() {
-          _locationMessage =
-              "Location permissions are permanently denied.";
-          _isLoading = false;
-        });
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          if (mounted) {
+            setState(() {
+              _locationMessage = "Permission denied";
+              _isLoadingLocation = false;
+            });
+          }
+          return;
+        }
       }
-      return;
-    }
 
-    try {
-      Position position = await Geolocator.getCurrentPosition(
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          setState(() {
+            _locationMessage = "Permission blocked";
+            _isLoadingLocation = false;
+          });
+        }
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
         ),
       );
+
       if (mounted) {
         setState(() {
+          _latitude = position.latitude;
+          _longitude = position.longitude;
           _locationMessage =
-              "Lat: ${position.latitude.toStringAsFixed(4)}, Long: ${position.longitude.toStringAsFixed(4)}";
-          _isLoading = false;
+              "${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}";
+          _isLoadingLocation = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _locationMessage = "Error getting location: $e";
-          _isLoading = false;
+          _locationMessage = "Error";
+          _isLoadingLocation = false;
         });
       }
     }
   }
 
-  Future<void> _toggleSOS() async {
-    if (_sosManager.state.isActive) {
-      await _sosManager.cancelSOS();
-      _showSnackBar('SOS Cancelled');
+  Future<void> _toggleBroadcast() async {
+    if (_isBroadcasting) {
+      await _bleService.stopAll();
+      _pulseController.stop();
+      setState(() => _isBroadcasting = false);
     } else {
-      // Show emergency type selection if not already set
-      await _showEmergencyTypeDialog();
+      if (_latitude == null || _longitude == null) {
+        await _getCurrentLocation();
+      }
+
+      if (_latitude == null || _longitude == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Location required')));
+        return;
+      }
+
+      final success = await _bleService.startMeshMode(
+        latitude: _latitude!,
+        longitude: _longitude!,
+        status: _selectedStatus,
+      );
+
+      if (success) {
+        _pulseController.repeat(reverse: true);
+        setState(() => _isBroadcasting = true);
+      }
     }
-  }
-
-  Future<void> _showEmergencyTypeDialog() async {
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Start SOS Alert'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Select Emergency Type:'),
-              const SizedBox(height: 12),
-              ...EmergencyType.values.map((type) => RadioListTile<EmergencyType>(
-                    title: Text(type.displayName),
-                    value: type,
-                    groupValue: _selectedEmergencyType,
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedEmergencyType = value!;
-                      });
-                      Navigator.of(context).pop(true);
-                    },
-                    dense: true,
-                  )),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _messageController,
-                decoration: const InputDecoration(
-                  labelText: 'Additional Message (optional)',
-                  border: OutlineInputBorder(),
-                  hintText: 'Describe your emergency...',
-                ),
-                maxLines: 2,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Start SOS', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true) {
-      await _startSOS();
-    }
-  }
-
-  Future<void> _startSOS() async {
-    final alert = await _sosManager.initiateSOS(
-      emergencyType: _selectedEmergencyType,
-      message: _messageController.text.isNotEmpty
-          ? _messageController.text
-          : null,
-    );
-
-    if (alert != null) {
-      _showSnackBar('SOS Alert Initiated');
-    } else if (_sosManager.state.hasError) {
-      _showSnackBar(_sosManager.state.errorMessage ?? 'Failed to start SOS');
-    }
-  }
-
-  void _showSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isInitializing) {
-      return Scaffold(
-        appBar: AppBar(title: const Text("SOS Emergency")),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Initializing services...'),
-            ],
-          ),
-        ),
-      );
-    }
-
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : Colors.black;
-    final subTextColor = isDark ? Colors.white70 : Colors.black54;
-    final state = _sosManager.state;
-    final isBroadcasting = state.isActive;
+    final subColor = isDark ? Colors.white70 : Colors.black54;
+    final statusColor = Color(_selectedStatus.colorValue);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text("SOS Emergency"),
         actions: [
-          // Status indicator
+          // Alert level indicator
+          if (_alertLevel != AlertLevel.peace)
+            Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _alertLevel == AlertLevel.disaster
+                    ? Colors.red
+                    : Colors.orange,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _alertLevel.label.toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          // BLE status
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: _buildStatusIndicator(),
+            padding: const EdgeInsets.only(right: 16),
+            child: Icon(
+              Icons.bluetooth,
+              color: _bleState == BLEConnectionState.meshActive
+                  ? Colors.blue
+                  : Colors.grey,
+              size: 20,
+            ),
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Connectivity Banner
-            _buildConnectivityBanner(),
-            const SizedBox(height: 20),
+            // Low power warning
+            if (_isLowPowerMode)
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withAlpha(40),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.battery_alert, color: Colors.orange, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Low Power Mode ON. Disable for reliable mesh.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
-            // Main SOS Button
+            // Status selection
+            const SizedBox(height: 8),
+            Text(
+              "SELECT YOUR STATUS",
+              style: TextStyle(fontSize: 12, color: subColor, letterSpacing: 1),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: SOSStatus.values.where((s) => s != SOSStatus.safe).map((
+                status,
+              ) {
+                final isSelected = _selectedStatus == status;
+                final color = Color(status.colorValue);
+                return GestureDetector(
+                  onTap: _isBroadcasting
+                      ? null
+                      : () => setState(() => _selectedStatus = status),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected ? color : color.withAlpha(30),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: color, width: 2),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          IconData(
+                            status.iconCodePoint,
+                            fontFamily: 'MaterialIcons',
+                          ),
+                          color: isSelected ? Colors.white : color,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          status.label,
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : color,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+
+            const SizedBox(height: 30),
+
+            // Main SOS button
             AnimatedBuilder(
               animation: _pulseAnimation,
               builder: (context, child) {
                 return Transform.scale(
-                  scale: isBroadcasting ? _pulseAnimation.value : 1.0,
+                  scale: _isBroadcasting ? _pulseAnimation.value : 1.0,
                   child: GestureDetector(
-                    onTap: _toggleSOS,
+                    onTap: _toggleBroadcast,
                     child: Container(
-                      width: 180,
-                      height: 180,
+                      width: 160,
+                      height: 160,
                       decoration: BoxDecoration(
-                        color: isBroadcasting ? Colors.redAccent : Colors.red,
+                        color: _isBroadcasting
+                            ? statusColor
+                            : statusColor.withAlpha(200),
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.red.withAlpha(
-                              isBroadcasting ? 150 : 100,
+                            color: statusColor.withAlpha(
+                              _isBroadcasting ? 150 : 80,
                             ),
-                            blurRadius: isBroadcasting ? 30 : 20,
-                            spreadRadius: isBroadcasting ? 10 : 5,
+                            blurRadius: _isBroadcasting ? 40 : 20,
+                            spreadRadius: _isBroadcasting ? 12 : 4,
                           ),
                         ],
                       ),
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              isBroadcasting ? Icons.stop : Icons.sensors,
-                              size: 40,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _isBroadcasting
+                                ? Icons.stop
+                                : IconData(
+                                    _selectedStatus.iconCodePoint,
+                                    fontFamily: 'MaterialIcons',
+                                  ),
+                            size: 36,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _isBroadcasting ? "STOP" : _selectedStatus.label,
+                            style: const TextStyle(
                               color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              isBroadcasting ? "STOP" : "SOS",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
+                          ),
+                          if (_isBroadcasting)
+                            const Text(
+                              "Broadcasting...",
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 10,
                               ),
                             ),
-                            if (isBroadcasting)
-                              Text(
-                                _getStatusText(state),
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
-                              ),
-                          ],
-                        ),
+                        ],
                       ),
                     ),
                   ),
@@ -363,455 +436,179 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
               },
             ),
 
-            // Status Info
-            if (isBroadcasting) ...[
-              const SizedBox(height: 20),
-              _buildStatusCard(state),
-            ],
+            const SizedBox(height: 30),
 
-            const SizedBox(height: 40),
+            // Location
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isDark ? Colors.grey[900] : Colors.grey[100],
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.location_on, color: Colors.blue, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _locationMessage,
+                      style: TextStyle(color: textColor, fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _isLoadingLocation ? null : _getCurrentLocation,
+                    icon: _isLoadingLocation
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh, size: 20),
+                  ),
+                ],
+              ),
+            ),
 
-            // Location Section
-            _buildLocationSection(isDark, textColor, subTextColor),
-
-            const SizedBox(height: 40),
+            const SizedBox(height: 20),
             const Divider(),
+
+            // Nearby SOS signals
+            if (_receivedPackets.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.sensors, size: 18, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  Text(
+                    "Nearby Signals (${_receivedPackets.length})",
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: textColor,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ..._receivedPackets
+                  .take(5)
+                  .map((packet) => _buildPacketCard(packet)),
+            ],
+
+            // Help text
             const SizedBox(height: 20),
-
-            // BLE Mode Selection
-            Text(
-              "Bluetooth Broadcast Mode",
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: textColor,
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withAlpha(20),
+                borderRadius: BorderRadius.circular(10),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "Select the type of signal to broadcast when SOS is active.",
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: subTextColor),
-            ),
-            const SizedBox(height: 20),
-
-            _buildCustomRadio(
-              context,
-              title: "Standard Broadcast (BLE 4.x)",
-              description:
-                  "Compatible with almost all smartphones. Sends a basic signal on 3 primary channels (37, 38, 39). Best for maximum reach.",
-              value: BroadcastMode.legacy,
-            ),
-            const SizedBox(height: 15),
-            _buildCustomRadio(
-              context,
-              title: "Enhanced Broadcast (BLE 5.0+)",
-              description:
-                  "Sends larger data packets using secondary channels. Best for rich sensor data or asset tracking. Requires newer devices to detect.",
-              value: BroadcastMode.extended,
-            ),
-
-            const SizedBox(height: 30),
-
-            // Mesh Network Info
-            _buildMeshNetworkInfo(),
-
-            const SizedBox(height: 30),
-
-            // Received Alerts
-            if (_sosManager.receivedAlerts.isNotEmpty) ...[
-              _buildReceivedAlertsSection(textColor),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusIndicator() {
-    final connectivity = _sosManager.connectivityService.currentState;
-    final hasInternet = connectivity.hasInternet;
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: hasInternet ? Colors.green : Colors.orange,
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          hasInternet ? 'Online' : 'Mesh',
-          style: const TextStyle(fontSize: 12),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildConnectivityBanner() {
-    final connectivity = _sosManager.connectivityService.currentState;
-
-    if (connectivity.hasInternet) return const SizedBox.shrink();
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.orange.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.orange),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.wifi_off, color: Colors.orange),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'No Internet Connection',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  'SOS will be relayed via Bluetooth mesh to reach emergency services.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusCard(SOSManagerState state) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.red.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.red.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildStatusItem(
-                icon: Icons.people,
-                value: '${state.peersReached}',
-                label: 'Peers Reached',
-              ),
-              _buildStatusItem(
-                icon: Icons.cloud,
-                value: state.serverReached ? 'Yes' : 'No',
-                label: 'Server Reached',
-                color: state.serverReached ? Colors.green : Colors.orange,
-              ),
-            ],
-          ),
-          if (state.activeAlert != null) ...[
-            const Divider(height: 24),
-            Text(
-              'Emergency: ${state.activeAlert!.emergencyType.displayName}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            if (state.activeAlert!.message != null)
-              Text(
-                state.activeAlert!.message!,
-                style: const TextStyle(fontSize: 12),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusItem({
-    required IconData icon,
-    required String value,
-    required String label,
-    Color? color,
-  }) {
-    return Column(
-      children: [
-        Icon(icon, color: color ?? Colors.red),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: color ?? Colors.red,
-          ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12),
-        ),
-      ],
-    );
-  }
-
-  String _getStatusText(SOSManagerState state) {
-    switch (state.sosState) {
-      case SosState.initiating:
-        return 'Initiating...';
-      case SosState.broadcasting:
-        return 'Broadcasting...';
-      case SosState.delivered:
-        return 'Delivered to server';
-      case SosState.acknowledged:
-        return 'Acknowledged';
-      default:
-        return '';
-    }
-  }
-
-  Widget _buildLocationSection(bool isDark, Color textColor, Color subTextColor) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.grey[100],
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          Text(
-            "Current Location",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: textColor,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            _locationMessage,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, color: subTextColor),
-          ),
-          const SizedBox(height: 15),
-          ElevatedButton.icon(
-            onPressed: _isLoading ? null : _getCurrentLocation,
-            icon: _isLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh),
-            label: Text(
-              _isLoading ? "Fetching..." : "Refresh Location",
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMeshNetworkInfo() {
-    final meshStatus = _sosManager.bleMeshService.getStatus();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.grey[100],
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.bluetooth, color: Colors.blue),
-              const SizedBox(width: 8),
-              const Text(
-                'Mesh Network Status',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildMeshStat('Peers', meshStatus['totalPeers'].toString()),
-              _buildMeshStat(
-                  'Connected', meshStatus['connectedPeers'].toString()),
-              _buildMeshStat(
-                  'With Internet', meshStatus['peersWithInternet'].toString()),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMeshStat(String label, String value) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: Colors.blue,
-          ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildReceivedAlertsSection(Color textColor) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Icon(Icons.warning_amber, color: Colors.orange),
-            const SizedBox(width: 8),
-            Text(
-              'Nearby Alerts (${_sosManager.receivedAlerts.length})',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: textColor,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        ..._sosManager.receivedAlerts.take(5).map((alert) => Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                leading: Icon(
-                  _getEmergencyIcon(alert.emergencyType),
-                  color: Colors.red,
-                ),
-                title: Text(alert.emergencyType.displayName),
-                subtitle: Text(
-                  'Hops: ${alert.hopCount} | ${_formatTime(alert.originatedAt)}',
-                ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () =>
-                      _sosManager.dismissReceivedAlert(alert.messageId),
-                ),
-              ),
-            )),
-      ],
-    );
-  }
-
-  IconData _getEmergencyIcon(EmergencyType type) {
-    switch (type) {
-      case EmergencyType.medical:
-        return Icons.medical_services;
-      case EmergencyType.fire:
-        return Icons.local_fire_department;
-      case EmergencyType.security:
-        return Icons.security;
-      case EmergencyType.naturalDisaster:
-        return Icons.storm;
-      case EmergencyType.accident:
-        return Icons.car_crash;
-      case EmergencyType.other:
-        return Icons.warning;
-    }
-  }
-
-  String _formatTime(DateTime time) {
-    final diff = DateTime.now().difference(time);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
-  }
-
-  Widget _buildCustomRadio(
-    BuildContext context, {
-    required String title,
-    required String description,
-    required BroadcastMode value,
-  }) {
-    final isSelected = _selectedMode == value;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final isBroadcasting = _sosManager.state.isActive;
-
-    return InkWell(
-      onTap: isBroadcasting
-          ? null
-          : () {
-              setState(() {
-                _selectedMode = value;
-              });
-            },
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: isSelected
-              ? (isDark ? Colors.blue.withAlpha(40) : Colors.blue.withAlpha(20))
-              : (isDark ? Colors.grey[900] : Colors.grey[100]),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? Colors.blue : Colors.transparent,
-            width: 2,
-          ),
-        ),
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 2.0),
-              child: Icon(
-                isSelected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_off,
-                color: isSelected ? Colors.blue : Colors.grey,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: isDark ? Colors.white : Colors.black,
-                    ),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        color: Colors.blue,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        "Mesh SOS",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: textColor,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   Text(
-                    description,
+                    "• No internet? Your signal relays via nearby phones\n• Keep app open for best results\n• Safe? Tap STOP to cancel",
                     style: TextStyle(
-                      fontSize: 14,
-                      height: 1.5,
-                      color: isDark ? Colors.white70 : Colors.black87,
+                      fontSize: 12,
+                      height: 1.4,
+                      color: subColor,
                     ),
                   ),
                 ],
               ),
             ),
+
+            const SizedBox(height: 30),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildPacketCard(SOSPacket packet) {
+    final color = Color(packet.status.colorValue);
+    final distance = _bleService.rssiCalculator.getSmoothedDistance(
+      packet.userId.toRadixString(16),
+    );
+    final ageMinutes = packet.ageSeconds ~/ 60;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withAlpha(100)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Icon(
+              IconData(
+                packet.status.iconCodePoint,
+                fontFamily: 'MaterialIcons',
+              ),
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  packet.status.description,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                Text(
+                  "${packet.latitude.toStringAsFixed(4)}, ${packet.longitude.toStringAsFixed(4)} • ${ageMinutes}m ago",
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+          if (distance != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                distance < 100
+                    ? "${distance.toStringAsFixed(0)}m"
+                    : "${(distance / 1000).toStringAsFixed(1)}km",
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
