@@ -1,4 +1,4 @@
-package com.example.project_flutter
+package com.development.heyblue
 
 import android.content.Context
 import android.content.Intent

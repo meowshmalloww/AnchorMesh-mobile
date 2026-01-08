@@ -114,24 +114,35 @@ class BLEService {
 
     switch (type) {
       case 'stateChanged':
-        _updateState(data as String);
+        if (data is String) {
+          _updateState(data);
+        }
         break;
       case 'packetReceived':
-        _handlePacketReceived(data as List<dynamic>, event['rssi'] as int?);
+        if (data is List) {
+          final rssi = event['rssi'];
+          _handlePacketReceived(data, rssi is int ? rssi : null);
+        }
         break;
       case 'lowPowerModeChanged':
-        _isLowPowerMode = data as bool;
-        if (_isLowPowerMode) {
-          _errorController.add(
-            'Low Power Mode enabled. Mesh may not work reliably.',
-          );
+        if (data is bool) {
+          _isLowPowerMode = data;
+          if (_isLowPowerMode) {
+            _errorController.add(
+              'Low Power Mode enabled. Mesh may not work reliably.',
+            );
+          }
         }
         break;
       case 'connectedDevicesChanged':
-        _connectedDevices = data as int;
+        if (data is int) {
+          _connectedDevices = data;
+        }
         break;
       case 'error':
-        _errorController.add(data as String);
+        if (data is String) {
+          _errorController.add(data);
+        }
         break;
     }
   }
@@ -343,6 +354,17 @@ class BLEService {
       return await _channel.invokeMethod<String>('getDeviceUuid');
     } on PlatformException {
       return null;
+    }
+  }
+
+  /// Check if device supports BLE 5.0
+  /// Returns true on iOS (iOS devices support BLE 5), and checks hardware on Android
+  Future<bool> supportsBle5() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('supportsBle5');
+      return result ?? false;
+    } on PlatformException {
+      return false;
     }
   }
 

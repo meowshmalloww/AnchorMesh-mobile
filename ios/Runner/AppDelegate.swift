@@ -4,29 +4,46 @@ import BackgroundTasks
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
-    
+
     private var bleEventChannel: FlutterEventChannel?
-    
+    private var isChannelsSetup = false
+
     override func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         GeneratedPluginRegistrant.register(with: self)
-        
-        // Register background tasks
-        BackgroundTaskManager.shared.registerTasks()
-        
-        // Setup BLE platform channels
-        guard let controller = window?.rootViewController as? FlutterViewController else {
-            return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+
+        // Register background tasks safely
+        do {
+            BackgroundTaskManager.shared.registerTasks()
+        } catch {
+            print("Failed to register background tasks: \(error)")
         }
-        
-        setupBLEChannels(controller: controller)
-        
+
+        // Setup BLE platform channels after a brief delay to ensure window is ready
+        DispatchQueue.main.async { [weak self] in
+            self?.setupChannelsIfNeeded()
+        }
+
         // Schedule background refresh
         BackgroundTaskManager.shared.scheduleRefresh()
-        
+
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+
+    private func setupChannelsIfNeeded() {
+        guard !isChannelsSetup else { return }
+        guard let controller = window?.rootViewController as? FlutterViewController else {
+            // Retry after a short delay if window isn't ready
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.setupChannelsIfNeeded()
+            }
+            return
+        }
+
+        setupBLEChannels(controller: controller)
+        isChannelsSetup = true
     }
     
     private func setupBLEChannels(controller: FlutterViewController) {
@@ -90,6 +107,12 @@ import BackgroundTasks
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    override func applicationWillTerminate(_ application: UIApplication) {
+        // Clean up BLE resources before app terminates
+        BLEManager.shared.stopAll()
+        super.applicationWillTerminate(application)
     }
 }
 

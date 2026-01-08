@@ -111,7 +111,7 @@ class _MapPageState extends State<MapPage> {
                 urlTemplate: ApiConfig.hasMapTiler
                     ? ApiConfig.mapTilerStreetsUrl
                     : ApiConfig.osmTileUrl,
-                userAgentPackageName: 'com.example.project_flutter',
+                userAgentPackageName: 'com.development.heyblue',
               ),
               // Markers layer
               MarkerLayer(markers: _buildMarkers()),

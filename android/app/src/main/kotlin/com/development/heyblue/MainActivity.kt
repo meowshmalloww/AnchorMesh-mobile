@@ -1,4 +1,4 @@
-package com.example.project_flutter
+package com.development.heyblue
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -49,6 +49,9 @@ class MainActivity : FlutterActivity() {
                     }
                     "requestBatteryExemption" -> {
                         result.success(bleManager.requestBatteryOptimizationExemption())
+                    }
+                    "supportsBle5" -> {
+                        result.success(bleManager.supportsBle5())
                     }
                     else -> {
                         result.notImplemented()

@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/packet_store.dart';
 import '../services/offline_map_service.dart';
+import '../services/ble_service.dart';
 
 /// Battery saving modes for mesh operation
 enum BatteryMode {
@@ -89,6 +91,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _autoUploadOnInternet = true;
   bool _showNotifications = true;
   String _userId = '';
+  bool _supportsBle5 = true; // Default to true, will be checked on load
 
   // Custom mode settings
   int _customScanSeconds = 30;
@@ -104,15 +107,30 @@ class _SettingsPageState extends State<SettingsPage> {
     final prefs = await SharedPreferences.getInstance();
     final userId = await PacketStore.instance.getUserId();
 
+    // Check BLE 5 support (iOS always supports, Android needs check)
+    bool supportsBle5 = true;
+    if (Platform.isAndroid) {
+      supportsBle5 = await BLEService.instance.supportsBle5();
+    }
+
+    // Get saved BLE version, default to legacy if BLE 5 not supported
+    var bleVersionIndex = prefs.getInt('bleVersion') ?? 1;
+    if (!supportsBle5 && bleVersionIndex == 1) {
+      // Force legacy mode if BLE 5 not supported
+      bleVersionIndex = 0;
+      await prefs.setInt('bleVersion', 0);
+    }
+
     setState(() {
       _batteryMode = BatteryMode.values[prefs.getInt('batteryMode') ?? 1];
-      _bleVersion = BLEVersion.values[prefs.getInt('bleVersion') ?? 1];
+      _bleVersion = BLEVersion.values[bleVersionIndex];
       _autoActivateOnDisaster = prefs.getBool('autoActivate') ?? true;
       _autoUploadOnInternet = prefs.getBool('autoUpload') ?? true;
       _showNotifications = prefs.getBool('notifications') ?? true;
       _userId = userId.toRadixString(16).toUpperCase().padLeft(8, '0');
       _customScanSeconds = prefs.getInt('customScan') ?? 30;
       _customSleepSeconds = prefs.getInt('customSleep') ?? 30;
+      _supportsBle5 = supportsBle5;
     });
   }
 
@@ -154,9 +172,18 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: Icons.bluetooth,
             iconColor: Colors.blue,
             children: [
-              ...BLEVersion.values.map(
-                (version) => _buildBLEVersionOption(version),
-              ),
+              // Only show BLE 5.x option if device supports it
+              ...BLEVersion.values
+                  .where((v) => v == BLEVersion.legacy || _supportsBle5)
+                  .map((version) => _buildBLEVersionOption(version)),
+              if (!_supportsBle5)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text(
+                    'BLE 5.x is not available on this device',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500], fontStyle: FontStyle.italic),
+                  ),
+                ),
             ],
           ),
 

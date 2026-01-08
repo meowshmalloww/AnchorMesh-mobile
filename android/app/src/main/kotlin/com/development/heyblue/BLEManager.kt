@@ -1,4 +1,4 @@
-package com.example.project_flutter
+package com.development.heyblue
 
 import android.Manifest
 import android.bluetooth.*
@@ -110,8 +110,15 @@ class BLEManager(private val context: Context) {
             return false
         }
 
+        // Update packet data
         currentPacketData = packetData
-        
+
+        // If already advertising, just update the data (GATT characteristic will serve new data)
+        if (isAdvertising) {
+            Log.d(TAG, "Updated advertising packet data")
+            return true
+        }
+
         // Setup GATT server first
         setupGattServer()
 
@@ -383,5 +390,29 @@ class BLEManager(private val context: Context) {
         stopScanning()
         discoveredDevices.clear()
         connectedDevices.clear()
+    }
+
+    /**
+     * Check if device supports BLE 5.0 features
+     * BLE 5.0 requires Android 8.0 (API 26)+ and hardware support
+     */
+    fun supportsBle5(): Boolean {
+        // BLE 5.0 features require Android 8.0 (API 26) minimum
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return false
+        }
+
+        val adapter = bluetoothAdapter ?: return false
+
+        // Check for BLE 5.0 specific features
+        // LE 2M PHY - higher throughput
+        val supports2MPhy = adapter.isLe2MPhySupported
+        // LE Coded PHY - longer range
+        val supportsCodedPhy = adapter.isLeCodedPhySupported
+        // Extended advertising
+        val supportsExtendedAdvertising = adapter.isLeExtendedAdvertisingSupported
+
+        // Device supports BLE 5 if it has at least one of the key features
+        return supports2MPhy || supportsCodedPhy || supportsExtendedAdvertising
     }
 }

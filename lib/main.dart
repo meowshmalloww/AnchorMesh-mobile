@@ -3,6 +3,13 @@ import 'home_screen.dart';
 import 'theme_notifier.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Handle Flutter errors gracefully
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+  };
+
   runApp(const MyApp());
 }
 

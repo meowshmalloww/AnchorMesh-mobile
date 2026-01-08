@@ -15,8 +15,8 @@ class BLEManager: NSObject {
     static let characteristicUUID = CBUUID(string: "12345678-1234-1234-1234-123456789ABD")
     
     /// State restoration identifier
-    static let centralRestoreId = "com.project_flutter.central"
-    static let peripheralRestoreId = "com.project_flutter.peripheral"
+    static let centralRestoreId = "com.development.heyblue.central"
+    static let peripheralRestoreId = "com.development.heyblue.peripheral"
     
     // MARK: - Properties
     

@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import BackgroundTasks
+import UserNotifications
 
 /// Background Task Manager for iOS
 /// Handles background fetch and processing for mesh SOS
@@ -9,8 +10,8 @@ class BackgroundTaskManager {
     static let shared = BackgroundTaskManager()
     
     // Task identifiers
-    static let refreshTaskId = "com.project_flutter.mesh.refresh"
-    static let processingTaskId = "com.project_flutter.mesh.processing"
+    static let refreshTaskId = "com.development.heyblue.mesh.refresh"
+    static let processingTaskId = "com.development.heyblue.mesh.processing"
     
     // USGS API
     static let usgsAPI = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_hour.geojson"
@@ -24,15 +25,23 @@ class BackgroundTaskManager {
             forTaskWithIdentifier: BackgroundTaskManager.refreshTaskId,
             using: nil
         ) { task in
-            self.handleRefreshTask(task as! BGAppRefreshTask)
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            self.handleRefreshTask(refreshTask)
         }
-        
+
         // Register processing task (for longer operations)
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: BackgroundTaskManager.processingTaskId,
             using: nil
         ) { task in
-            self.handleProcessingTask(task as! BGProcessingTask)
+            guard let processingTask = task as? BGProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            self.handleProcessingTask(processingTask)
         }
     }
     
