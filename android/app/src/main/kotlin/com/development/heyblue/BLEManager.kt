@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -98,6 +99,32 @@ class BLEManager(private val context: Context) {
     // Broadcasting (Advertiser)
     // =====================
 
+    private var advertisingSet: AdvertisingSet? = null
+    
+    // Callback for BLE 5.0 Extended Advertising
+    private val advertisingSetCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        object : AdvertisingSetCallback() {
+            override fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int) {
+                if (status == AdvertisingSetCallback.ADVERTISE_SUCCESS) {
+                    Log.d(TAG, "Extended Advertising started successfully. TxPower: $txPower")
+                    this@BLEManager.advertisingSet = advertisingSet
+                    isAdvertising = true
+                    updateCurrentState()
+                } else {
+                    Log.e(TAG, "Extended Advertising failed to start: $status")
+                    // Fallback to legacy if extended fails
+                    startLegacyAdvertising()
+                }
+            }
+
+            override fun onAdvertisingSetStopped(advertisingSet: AdvertisingSet?) {
+                Log.d(TAG, "Extended Advertising stopped")
+                isAdvertising = false
+                updateCurrentState()
+            }
+        }
+    } else null
+
     fun startBroadcasting(packetData: ByteArray): Boolean {
         if (!checkBluetoothPermissions()) {
             sendEvent("error", "Bluetooth permissions not granted")
@@ -113,16 +140,67 @@ class BLEManager(private val context: Context) {
         // Update packet data
         currentPacketData = packetData
 
-        // If already advertising, just update the data (GATT characteristic will serve new data)
+        // If already advertising, update the data
         if (isAdvertising) {
-            Log.d(TAG, "Updated advertising packet data")
+            if (advertisingSet != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // Update Extended Advertising data
+                val data = AdvertiseData.Builder()
+                    .setIncludeDeviceName(false)
+                    .addServiceUuid(ParcelUuid(SERVICE_UUID))
+                    .build()
+                advertisingSet?.setAdvertisingData(data)
+                Log.d(TAG, "Updated extended advertising data")
+            }
+            // For legacy, GATT server handles the data update automatically via read requests
             return true
         }
 
         // Setup GATT server first
         setupGattServer()
 
-        // Build advertising settings
+        // Try Extended Advertising features on Android O (API 26+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && supportsBle5()) {
+            try {
+                // Extended Advertising parameters (Long Range / Coded PHY)
+                val parameters = AdvertisingSetParameters.Builder()
+                    .setLegacyMode(false) // Use extended PDUs
+                    .setConnectable(true)
+                    .setInterval(AdvertisingSetParameters.INTERVAL_LOW)
+                    .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
+                    .setPrimaryPhy(BluetoothDevice.PHY_LE_CODED) // Long Range
+                    .setSecondaryPhy(BluetoothDevice.PHY_LE_CODED)
+                    .build()
+
+                val data = AdvertiseData.Builder()
+                    .setIncludeDeviceName(false)
+                    .addServiceUuid(ParcelUuid(SERVICE_UUID))
+                    .build()
+
+                advertiser.startAdvertisingSet(
+                    parameters,
+                    data,
+                    null, // Scan response
+                    null, // Periodic parameters
+                    null, // Periodic data
+                    advertisingSetCallback
+                )
+                
+                Log.d(TAG, "Attempting Extended Advertising (Coded PHY)...")
+                return true
+
+            } catch (e: Exception) {
+                Log.w(TAG, "Extended Advertising failed or not supported: ${e.message}. Falling back to legacy.")
+                // Fallback to legacy
+            }
+        }
+
+        // Legacy Advertising Fallback
+        return startLegacyAdvertising()
+    }
+
+    private fun startLegacyAdvertising(): Boolean {
+        val advertiser = bluetoothLeAdvertiser ?: return false
+        
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
@@ -130,7 +208,6 @@ class BLEManager(private val context: Context) {
             .setTimeout(0) // Advertise indefinitely
             .build()
 
-        // Build advertising data
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
@@ -140,17 +217,23 @@ class BLEManager(private val context: Context) {
             advertiser.startAdvertising(settings, data, advertiseCallback)
             isAdvertising = true
             updateCurrentState()
-            Log.d(TAG, "Started advertising")
+            Log.d(TAG, "Started legacy advertising")
             return true
         } catch (e: Exception) {
-            sendEvent("error", "Failed to start advertising: ${e.message}")
+            sendEvent("error", "Failed to start legacy advertising: ${e.message}")
             return false
         }
     }
 
     fun stopBroadcasting(): Boolean {
         try {
-            bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+            if (advertisingSet != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                bluetoothLeAdvertiser?.stopAdvertisingSet(advertisingSetCallback)
+                advertisingSet = null
+            } else {
+                bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+            }
+            
             gattServer?.close()
             gattServer = null
             isAdvertising = false
@@ -165,13 +248,13 @@ class BLEManager(private val context: Context) {
 
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-            Log.d(TAG, "Advertising started successfully")
+            Log.d(TAG, "Legacy advertising started successfully")
         }
 
         override fun onStartFailure(errorCode: Int) {
             isAdvertising = false
             updateCurrentState()
-            sendEvent("error", "Advertising failed with code: $errorCode")
+            sendEvent("error", "Legacy advertising failed with code: $errorCode")
         }
     }
 
@@ -246,9 +329,18 @@ class BLEManager(private val context: Context) {
             return false
         }
 
-        val settings = ScanSettings.Builder()
+        // Configure scan settings
+        val settingsBuilder = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
+            
+        // Enable Extended Advertising / Coded PHY support if available
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && supportsBle5()) {
+            settingsBuilder.setLegacy(false)
+            settingsBuilder.setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
+            Log.d(TAG, "Configured scanner for Extended Advertising (Coded PHY)")
+        }
+
+        val settings = settingsBuilder.build()
 
         val filters = listOf(
             ScanFilter.Builder()
@@ -414,5 +506,13 @@ class BLEManager(private val context: Context) {
 
         // Device supports BLE 5 if it has at least one of the key features
         return supports2MPhy || supportsCodedPhy || supportsExtendedAdvertising
+    }
+
+    /**
+     * Check if WiFi is enabled (potential interference)
+     */
+    fun checkWifiStatus(): Boolean {
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        return wifiManager?.isWifiEnabled == true
     }
 }

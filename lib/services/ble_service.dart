@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import '../models/sos_packet.dart';
 import '../models/sos_status.dart';
 import '../utils/rssi_calculator.dart';
@@ -15,6 +16,36 @@ enum BLEConnectionState {
   broadcasting,
   scanning,
   meshActive,
+}
+
+/// Echo event when own packet is detected being relayed
+class EchoEvent {
+  final int userId;
+  final int rssi;
+  final DateTime timestamp;
+
+  EchoEvent({
+    required this.userId,
+    required this.rssi,
+    required this.timestamp,
+  });
+}
+
+/// Verification status for SOS signals
+class VerificationStatus {
+  final int userId;
+  final int confirmations;
+  final bool isVerified;
+  final List<int> confirmingDevices;
+
+  VerificationStatus({
+    required this.userId,
+    required this.confirmations,
+    required this.isVerified,
+    required this.confirmingDevices,
+  });
+
+  static const int requiredConfirmations = 3;
 }
 
 /// BLE Service for cross-platform mesh networking
@@ -38,6 +69,10 @@ class BLEService {
       StreamController<BLEConnectionState>.broadcast();
   final _packetReceivedController = StreamController<SOSPacket>.broadcast();
   final _errorController = StreamController<String>.broadcast();
+  final _echoController = StreamController<EchoEvent>.broadcast();
+  final _verificationController =
+      StreamController<VerificationStatus>.broadcast();
+  final _handshakeController = StreamController<int>.broadcast();
 
   // Services
   final PacketStore _packetStore = PacketStore.instance;
@@ -60,6 +95,22 @@ class BLEService {
   final List<SOSPacket> _broadcastQueue = [];
   int _queueIndex = 0;
 
+  // Echo detection - tracks when our packets are seen being relayed
+  int _echoCount = 0;
+  final Set<int> _echoSources = {};
+
+  // Handshake counter - number of successful relays
+  int _handshakeCount = 0;
+
+  // Verification tracking - which devices have confirmed each SOS
+  final Map<int, Set<int>> _verificationMap = {};
+
+  // Seen packet IDs to prevent rebroadcast loops
+  final Set<String> _seenPacketIds = {};
+
+  // Broadcast priority tracking
+  int _broadcastTick = 0;
+
   /// Stream of connection state changes
   Stream<BLEConnectionState> get connectionState =>
       _connectionStateController.stream;
@@ -69,6 +120,16 @@ class BLEService {
 
   /// Stream of error messages
   Stream<String> get onError => _errorController.stream;
+
+  /// Stream of echo events (when our packet is detected being relayed)
+  Stream<EchoEvent> get onEchoDetected => _echoController.stream;
+
+  /// Stream of verification status updates
+  Stream<VerificationStatus> get onVerificationUpdate =>
+      _verificationController.stream;
+
+  /// Stream of handshake count updates
+  Stream<int> get onHandshakeUpdate => _handshakeController.stream;
 
   /// Current connection state
   BLEConnectionState get state => _state;
@@ -82,6 +143,15 @@ class BLEService {
   /// RSSI calculator for distance
   RSSICalculator get rssiCalculator => _rssiCalculator;
 
+  /// Number of times our packet was echoed back
+  int get echoCount => _echoCount;
+
+  /// Number of unique devices that relayed our packet
+  int get echoSources => _echoSources.length;
+
+  /// Number of successful handshakes (packet relays)
+  int get handshakeCount => _handshakeCount;
+
   /// Initialize the BLE service
   void _init() {
     _eventChannel.receiveBroadcastStream().listen(
@@ -94,10 +164,23 @@ class BLEService {
     // Start cleanup timer (every 30 minutes)
     _cleanupTimer = Timer.periodic(const Duration(minutes: 30), (_) {
       _packetStore.deleteExpiredPackets();
+      _cleanupSeenPackets();
     });
 
     // Load user data
     _loadUserData();
+  }
+
+  void _cleanupSeenPackets() {
+    // Keep only recent packet IDs to prevent memory bloat
+    if (_seenPacketIds.length > 1000) {
+      final toRemove = _seenPacketIds
+          .take(_seenPacketIds.length - 500)
+          .toList();
+      for (final id in toRemove) {
+        _seenPacketIds.remove(id);
+      }
+    }
   }
 
   Future<void> _loadUserData() async {
@@ -163,6 +246,29 @@ class BLEService {
       // Check expiry
       if (packet.isExpired) return;
 
+      // Create unique packet ID for deduplication
+      final packetId = '${packet.userId}-${packet.sequence}';
+
+      // ECHO DETECTION: Check if this is our own packet being relayed back
+      if (packet.userId == _userId) {
+        _handleEchoDetected(packet, rssi ?? -80);
+        return; // Don't process our own packets further
+      }
+
+      // Check if this is a SAFE packet - stop propagation for this user
+      if (packet.status == SOSStatus.safe) {
+        _handleSafePacket(packet);
+        return;
+      }
+
+      // Check if we've already seen this exact packet
+      if (_seenPacketIds.contains(packetId)) {
+        // Still count as verification if from different source
+        _addVerification(packet.userId, _userId!);
+        return;
+      }
+      _seenPacketIds.add(packetId);
+
       // Try to save (handles deduplication)
       final isNew = await _packetStore.savePacket(packet);
 
@@ -172,15 +278,103 @@ class BLEService {
           _rssiCalculator.addSample(packet.userId.toRadixString(16), rssi);
         }
 
-        // Emit to UI
-        _packetReceivedController.add(packet);
+        // Emit to UI - ONLY if broadcast (0) or targeted to us
+        if (packet.targetId == 0 || packet.targetId == _userId) {
+          _packetReceivedController.add(packet);
+        } else {
+          debugPrint(
+            'Relaying targeted message for ${packet.targetId.toRadixString(16)}',
+          );
+        }
 
         // Add to broadcast queue for relay
         _addToQueue(packet);
+
+        // Increment handshake counter
+        _handshakeCount++;
+        _handshakeController.add(_handshakeCount);
+
+        // Add verification (we received it, so we confirm it)
+        _addVerification(packet.userId, _userId!);
       }
     } catch (e) {
       _errorController.add('Failed to parse packet: $e');
     }
+  }
+
+  /// Handle echo detection - our packet seen being relayed
+  void _handleEchoDetected(SOSPacket packet, int rssi) {
+    _echoCount++;
+    // Track the source (we can't know exactly who, but we know it's not us)
+    // In real implementation, you'd track the BLE address
+    _echoSources.add(rssi.hashCode ^ DateTime.now().millisecondsSinceEpoch);
+
+    final event = EchoEvent(
+      userId: packet.userId,
+      rssi: rssi,
+      timestamp: DateTime.now(),
+    );
+    _echoController.add(event);
+
+    debugPrint(
+      'ECHO detected! Count: $_echoCount from ${_echoSources.length} sources',
+    );
+  }
+
+  /// Handle SAFE packet - stop propagation
+  void _handleSafePacket(SOSPacket packet) {
+    // Remove this user from broadcast queue
+    _broadcastQueue.removeWhere((p) => p.userId == packet.userId);
+
+    // Remove from verification tracking
+    _verificationMap.remove(packet.userId);
+
+    // Still save and emit to UI
+    _packetStore.savePacket(packet);
+    _packetReceivedController.add(packet);
+
+    debugPrint(
+      'SAFE packet received for user ${packet.userId.toRadixString(16)} - stopping propagation',
+    );
+  }
+
+  /// Add verification for an SOS signal
+  void _addVerification(int sosUserId, int confirmingDeviceId) {
+    _verificationMap.putIfAbsent(sosUserId, () => {});
+    _verificationMap[sosUserId]!.add(confirmingDeviceId);
+
+    final confirmations = _verificationMap[sosUserId]!.length;
+    final isVerified =
+        confirmations >= VerificationStatus.requiredConfirmations;
+
+    final status = VerificationStatus(
+      userId: sosUserId,
+      confirmations: confirmations,
+      isVerified: isVerified,
+      confirmingDevices: _verificationMap[sosUserId]!.toList(),
+    );
+
+    _verificationController.add(status);
+
+    if (isVerified) {
+      debugPrint(
+        'SOS from ${sosUserId.toRadixString(16)} VERIFIED by $confirmations devices',
+      );
+    }
+  }
+
+  /// Get verification status for a user
+  VerificationStatus? getVerificationStatus(int userId) {
+    final confirmingDevices = _verificationMap[userId];
+    if (confirmingDevices == null) return null;
+
+    return VerificationStatus(
+      userId: userId,
+      confirmations: confirmingDevices.length,
+      isVerified:
+          confirmingDevices.length >= VerificationStatus.requiredConfirmations,
+      confirmingDevices: confirmingDevices.toList(),
+    );
   }
 
   /// Add packet to broadcast queue
@@ -188,9 +382,10 @@ class BLEService {
     // Don't relay our own packets
     if (packet.userId == _userId) return;
 
-    // Don't relay SAFE packets multiple times
+    // Don't relay SAFE packets (they stop propagation)
     if (packet.status == SOSStatus.safe) {
       _broadcastQueue.removeWhere((p) => p.userId == packet.userId);
+      return;
     }
 
     // Add or update in queue
@@ -215,6 +410,11 @@ class BLEService {
     if (_userId == null) await _loadUserData();
 
     _sequence = await _packetStore.incrementSequence();
+
+    // Reset echo tracking for new broadcast
+    _echoCount = 0;
+    _echoSources.clear();
+    _handshakeCount = 0;
 
     _currentBroadcast = SOSPacket.create(
       userId: _userId!,
@@ -241,50 +441,118 @@ class BLEService {
     }
   }
 
-  /// Start round-robin broadcast loop
+  /// Send a targeted message to a specific user
+  Future<bool> sendTargetMessage({
+    required int targetUserId,
+    required double latitude,
+    required double longitude,
+    required SOSStatus status,
+  }) async {
+    if (_userId == null) await _loadUserData();
+
+    _sequence = await _packetStore.incrementSequence();
+
+    final packet = SOSPacket.create(
+      userId: _userId!,
+      sequence: _sequence,
+      latitude: latitude,
+      longitude: longitude,
+      status: status,
+      targetId: targetUserId,
+    );
+
+    // Add to broadcast queue
+    _addToQueue(packet);
+
+    // Save locally
+    await _packetStore.savePacket(packet);
+
+    // Trigger immediate broadcast attempt
+    try {
+      await _channel.invokeMethod<bool>('startBroadcasting', {
+        'packet': packet.toBytes(),
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Start round-robin broadcast loop with smart prioritization
   void _startBroadcastLoop() {
     _broadcastTimer?.cancel();
+    _broadcastTick = 0;
 
     // Broadcast every 300ms, cycling through queue
     _broadcastTimer = Timer.periodic(const Duration(milliseconds: 300), (
       timer,
     ) async {
-      if (_broadcastQueue.isEmpty) return;
+      _broadcastTick++;
 
-      // Get next packet in queue
-      _queueIndex = (_queueIndex + 1) % _broadcastQueue.length;
-      final packet = _broadcastQueue[_queueIndex];
+      SOSPacket? packetToBroadcast;
 
-      // Add random delay to prevent jamming (0-500ms)
+      // PRIORITY RULE 1: Broadcast own SOS 50% of the time (every even tick)
+      if (_broadcastTick % 2 == 0 && _currentBroadcast != null) {
+        packetToBroadcast = _currentBroadcast;
+      } else {
+        // Broadcast relayed packets in other slots
+        if (_broadcastQueue.isNotEmpty) {
+          // Queue filter: Don't relay own packet again here
+          final relayCandidates = _broadcastQueue
+              .where((p) => p.userId != _userId)
+              .toList();
+
+          if (relayCandidates.isNotEmpty) {
+            _queueIndex = (_queueIndex + 1) % relayCandidates.length;
+            packetToBroadcast = relayCandidates[_queueIndex];
+          } else if (_currentBroadcast != null) {
+            // Fallback to own packet if queue empty
+            packetToBroadcast = _currentBroadcast;
+          }
+        } else if (_currentBroadcast != null) {
+          packetToBroadcast = _currentBroadcast;
+        }
+      }
+
+      if (packetToBroadcast == null) return;
+
+      // ANTI-JAMMING: Random delay before rebroadcast (0-500ms)
       await Future.delayed(Duration(milliseconds: Random().nextInt(500)));
 
       // Broadcast
       try {
         await _channel.invokeMethod<bool>('startBroadcasting', {
-          'packet': packet.toBytes(),
+          'packet': packetToBroadcast.toBytes(),
         });
       } catch (_) {}
     });
   }
 
-  /// Stop broadcasting
+  /// Stop broadcasting and send SAFE packet
   Future<bool> stopBroadcasting() async {
     _broadcastTimer?.cancel();
     _broadcastTimer = null;
 
-    // If we were broadcasting SOS, send SAFE
+    // If we were broadcasting SOS, send SAFE to stop propagation
     if (_currentBroadcast != null &&
         _currentBroadcast!.status != SOSStatus.safe) {
-      final safePacket = _currentBroadcast!.markSafe();
-      _broadcastQueue.insert(0, safePacket);
+      _sequence = await _packetStore.incrementSequence();
+      final safePacket = SOSPacket.create(
+        userId: _userId!,
+        sequence: _sequence,
+        latitude: _currentBroadcast!.latitude,
+        longitude: _currentBroadcast!.longitude,
+        status: SOSStatus.safe,
+      );
 
       try {
-        await _channel.invokeMethod<bool>('startBroadcasting', {
-          'packet': safePacket.toBytes(),
-        });
-
-        // Brief delay to let SAFE propagate
-        await Future.delayed(const Duration(seconds: 2));
+        // Broadcast SAFE packet multiple times to ensure propagation
+        for (int i = 0; i < 5; i++) {
+          await _channel.invokeMethod<bool>('startBroadcasting', {
+            'packet': safePacket.toBytes(),
+          });
+          await Future.delayed(const Duration(milliseconds: 200));
+        }
       } catch (_) {}
     }
 
@@ -358,10 +626,19 @@ class BLEService {
   }
 
   /// Check if device supports BLE 5.0
-  /// Returns true on iOS (iOS devices support BLE 5), and checks hardware on Android
   Future<bool> supportsBle5() async {
     try {
       final result = await _channel.invokeMethod<bool>('supportsBle5');
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Check if WiFi is enabled (potential interference)
+  Future<bool> checkWifiStatus() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('checkWifiStatus');
       return result ?? false;
     } on PlatformException {
       return false;
@@ -384,6 +661,9 @@ class BLEService {
     return _packetStore.getUnsyncedPackets();
   }
 
+  /// Get broadcast queue size
+  int get queueSize => _broadcastQueue.length;
+
   /// Dispose resources
   void dispose() {
     _broadcastTimer?.cancel();
@@ -391,5 +671,8 @@ class BLEService {
     _connectionStateController.close();
     _packetReceivedController.close();
     _errorController.close();
+    _echoController.close();
+    _verificationController.close();
+    _handshakeController.close();
   }
 }

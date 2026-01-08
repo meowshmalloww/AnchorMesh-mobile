@@ -97,21 +97,22 @@ class _MapPageState extends State<MapPage> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: const LatLng(37.7749, -122.4194), // Default: SF
-              initialZoom: _currentZoom,
-              minZoom: 3,
-              maxZoom: 18,
+              initialCenter: const LatLng(37.7749, -122.4194),
+              initialZoom: ApiConfig.defaultMapZoom,
+              minZoom: ApiConfig.minMapZoom,
+              maxZoom: ApiConfig.maxMapZoom,
               onPositionChanged: (position, hasGesture) {
                 setState(() => _currentZoom = position.zoom);
               },
             ),
             children: [
-              // Tile layer (OSM or MapTiler)
+              // Tile layer (OSM by default - FREE, MapTiler optional)
               TileLayer(
                 urlTemplate: ApiConfig.hasMapTiler
                     ? ApiConfig.mapTilerStreetsUrl
                     : ApiConfig.osmTileUrl,
                 userAgentPackageName: 'com.development.heyblue',
+                maxZoom: ApiConfig.maxMapZoom,
               ),
               // Markers layer
               MarkerLayer(markers: _buildMarkers()),

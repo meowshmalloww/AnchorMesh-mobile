@@ -116,6 +116,54 @@ class RSSICalculator {
   }
 }
 
+/// Kalman Filter for RSSI smoothing
+/// Provides better noise reduction than simple moving average
+class KalmanFilter {
+  double _estimate;
+  double _errorEstimate;
+  final double _errorMeasurement;
+  final double _processNoise;
+
+  /// Create a Kalman filter
+  /// - initialEstimate: Starting RSSI estimate (e.g., -70)
+  /// - errorMeasurement: Measurement noise (higher = less trust in measurements, e.g., 4.0)
+  /// - processNoise: How fast the actual value changes (e.g., 0.5)
+  KalmanFilter({
+    double initialEstimate = -70.0,
+    double errorMeasurement = 4.0,
+    double processNoise = 0.5,
+  }) : _estimate = initialEstimate,
+       _errorEstimate = errorMeasurement,
+       _errorMeasurement = errorMeasurement,
+       _processNoise = processNoise;
+
+  /// Process a new measurement and return filtered value
+  double filter(double measurement) {
+    // Prediction
+    _errorEstimate = _errorEstimate + _processNoise;
+
+    // Kalman Gain
+    final kalmanGain = _errorEstimate / (_errorEstimate + _errorMeasurement);
+
+    // Update estimate
+    _estimate = _estimate + kalmanGain * (measurement - _estimate);
+
+    // Update error estimate
+    _errorEstimate = (1 - kalmanGain) * _errorEstimate;
+
+    return _estimate;
+  }
+
+  /// Get current estimate
+  double get estimate => _estimate;
+
+  /// Reset the filter
+  void reset({double? initialEstimate}) {
+    _estimate = initialEstimate ?? -70.0;
+    _errorEstimate = _errorMeasurement;
+  }
+}
+
 /// Direction finding using compass + RSSI
 class DirectionFinder {
   /// RSSI readings at different compass headings

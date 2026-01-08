@@ -30,6 +30,14 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   AlertLevel _alertLevel = AlertLevel.peace;
   final bool _isLowPowerMode = false;
 
+  // Mesh feedback
+  int _handshakeCount = 0;
+  int _echoCount = 0;
+  int _echoSources = 0;
+  VerificationStatus? _myVerification;
+  bool _isWifiEnabled = false;
+  Timer? _wifiCheckTimer;
+
   // Received packets
   final List<SOSPacket> _receivedPackets = [];
 
@@ -46,6 +54,9 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   StreamSubscription? _packetSubscription;
   StreamSubscription? _errorSubscription;
   StreamSubscription? _alertSubscription;
+  StreamSubscription? _echoSubscription;
+  StreamSubscription? _handshakeSubscription;
+  StreamSubscription? _verificationSubscription;
 
   @override
   void initState() {
@@ -53,6 +64,22 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     _setupAnimation();
     _setupListeners();
     _loadActivePackets();
+
+    // Initial WiFi check
+    _checkWifiStatus();
+
+    // Check WiFi status occasionally while open
+    _wifiCheckTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _checkWifiStatus(),
+    );
+  }
+
+  Future<void> _checkWifiStatus() async {
+    final result = await _bleService.checkWifiStatus();
+    if (mounted && result != _isWifiEnabled) {
+      setState(() => _isWifiEnabled = result);
+    }
   }
 
   void _setupAnimation() {
@@ -103,6 +130,45 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
         }
       }
     });
+
+    // Echo detection - when our packet is relayed back
+    _echoSubscription = _bleService.onEchoDetected.listen((event) {
+      if (mounted) {
+        setState(() {
+          _echoCount = _bleService.echoCount;
+          _echoSources = _bleService.echoSources;
+        });
+        // Show feedback
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📡 Signal relayed! $_echoCount copies out there'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    });
+
+    // Handshake count updates
+    _handshakeSubscription = _bleService.onHandshakeUpdate.listen((count) {
+      if (mounted) {
+        setState(() => _handshakeCount = count);
+      }
+    });
+
+    // Verification updates
+    _verificationSubscription = _bleService.onVerificationUpdate.listen((
+      status,
+    ) {
+      if (mounted) {
+        // Check if this is verification for our broadcast
+        _bleService.getUserId().then((userId) {
+          if (status.userId == userId) {
+            setState(() => _myVerification = status);
+          }
+        });
+      }
+    });
   }
 
   Future<void> _loadActivePackets() async {
@@ -142,6 +208,10 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     _packetSubscription?.cancel();
     _errorSubscription?.cancel();
     _alertSubscription?.cancel();
+    _echoSubscription?.cancel();
+    _handshakeSubscription?.cancel();
+    _verificationSubscription?.cancel();
+    _wifiCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -321,6 +391,44 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
                 ),
               ),
 
+            // WiFi Warning
+            if (_isWifiEnabled)
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withAlpha(40),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.wifi_off, color: Colors.blue, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                          children: [
+                            const TextSpan(
+                              text: 'Starlink/WiFi is ON.',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const TextSpan(
+                              text:
+                                  ' Turn off for better mesh range if not needed.',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
             // Status selection
             const SizedBox(height: 8),
             Text(
@@ -439,6 +547,12 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
 
             const SizedBox(height: 30),
 
+            // Mesh feedback stats (only when broadcasting)
+            if (_isBroadcasting) ...[
+              _buildMeshFeedbackCard(),
+              const SizedBox(height: 20),
+            ],
+
             // Location
             Container(
               padding: const EdgeInsets.all(12),
@@ -549,6 +663,7 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
       packet.userId.toRadixString(16),
     );
     final ageMinutes = packet.ageSeconds ~/ 60;
+    final verification = _bleService.getVerificationStatus(packet.userId);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -571,17 +686,47 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  packet.status.description,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
+                Row(
+                  children: [
+                    Text(
+                      packet.status.description,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    if (verification != null && verification.isVerified) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          '✓ VERIFIED',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 Text(
                   "${packet.latitude.toStringAsFixed(4)}, ${packet.longitude.toStringAsFixed(4)} • ${ageMinutes}m ago",
                   style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                 ),
+                if (verification != null)
+                  Text(
+                    'Confirmed by ${verification.confirmations} device${verification.confirmations != 1 ? 's' : ''}',
+                    style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                  ),
               ],
             ),
           ),
@@ -604,6 +749,116 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMeshFeedbackCard() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.grey[900] : Colors.grey[100],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _echoCount > 0
+              ? Colors.green.withAlpha(100)
+              : Colors.grey.withAlpha(50),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.share,
+                size: 18,
+                color: _echoCount > 0 ? Colors.green : Colors.grey,
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'Mesh Status',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildStatColumn(
+                icon: Icons.repeat,
+                value: '$_echoCount',
+                label: 'Echoes',
+                color: Colors.green,
+              ),
+              _buildStatColumn(
+                icon: Icons.devices,
+                value: '$_echoSources',
+                label: 'Relays',
+                color: Colors.blue,
+              ),
+              _buildStatColumn(
+                icon: Icons.handshake,
+                value: '$_handshakeCount',
+                label: 'Handshakes',
+                color: Colors.purple,
+              ),
+              _buildStatColumn(
+                icon: Icons.check_circle,
+                value: _myVerification?.isVerified == true ? 'YES' : 'NO',
+                label: 'Verified',
+                color: _myVerification?.isVerified == true
+                    ? Colors.green
+                    : Colors.orange,
+              ),
+            ],
+          ),
+          if (_echoCount > 0) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.green.withAlpha(20),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check, color: Colors.green, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$_echoCount copies being carried by $_echoSources devices',
+                    style: const TextStyle(fontSize: 12, color: Colors.green),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatColumn({
+    required IconData icon,
+    required String value,
+    required String label,
+    required Color color,
+  }) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+            color: color,
+          ),
+        ),
+        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+      ],
     );
   }
 }

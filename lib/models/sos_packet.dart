@@ -13,6 +13,7 @@ import 'sos_status.dart';
 /// | 12-15| Longitude | 4B   | ×10^7 integer |
 /// | 16   | Status    | 1B   | Status code |
 /// | 17-20| Timestamp | 4B   | Unix seconds |
+/// | 21-24| Target ID | 4B   | 0=Broadcast, else UserID |
 class SOSPacket {
   /// App header identifier (0xFFFF)
   static const int appHeader = 0xFFFF;
@@ -47,6 +48,9 @@ class SOSPacket {
   /// Whether this packet has been synced to cloud
   bool isSynced;
 
+  /// Target User ID (0 = Broadcast/All)
+  final int targetId;
+
   SOSPacket({
     required this.userId,
     required this.sequence,
@@ -57,6 +61,7 @@ class SOSPacket {
     this.rssi,
     this.dbId,
     this.isSynced = false,
+    this.targetId = 0,
   });
 
   /// Generate a random 4-byte user ID
@@ -66,12 +71,14 @@ class SOSPacket {
   }
 
   /// Create packet from current location
+  /// Create packet from current location
   factory SOSPacket.create({
     required int userId,
     required int sequence,
     required double latitude,
     required double longitude,
     required SOSStatus status,
+    int targetId = 0,
   }) {
     return SOSPacket(
       userId: userId,
@@ -80,6 +87,7 @@ class SOSPacket {
       longitudeE7: (longitude * 10000000).round(),
       status: status,
       timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      targetId: targetId,
     );
   }
 
@@ -114,6 +122,7 @@ class SOSPacket {
           : longitudeE7,
       status: status,
       timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      targetId: targetId,
     );
   }
 
@@ -126,6 +135,7 @@ class SOSPacket {
       longitudeE7: longitudeE7,
       status: SOSStatus.safe,
       timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      targetId: targetId,
     );
   }
 
@@ -160,13 +170,20 @@ class SOSPacket {
       (timestamp >> 16) & 0xFF,
       (timestamp >> 8) & 0xFF,
       timestamp & 0xFF,
+      // Target ID (4 bytes)
+      (targetId >> 24) & 0xFF,
+      (targetId >> 16) & 0xFF,
+      (targetId >> 8) & 0xFF,
+      targetId & 0xFF,
     ];
   }
 
   /// Deserialize from bytes
   factory SOSPacket.fromBytes(List<int> bytes, {int? rssi}) {
     if (bytes.length < 21) {
-      throw ArgumentError('Invalid packet size: ${bytes.length}, expected 21');
+      throw ArgumentError(
+        'Invalid packet size: ${bytes.length}, expected >= 21',
+      );
     }
 
     // Verify header
@@ -184,6 +201,9 @@ class SOSPacket {
       timestamp:
           (bytes[17] << 24) | (bytes[18] << 16) | (bytes[19] << 8) | bytes[20],
       rssi: rssi,
+      targetId: bytes.length >= 25
+          ? (bytes[21] << 24) | (bytes[22] << 16) | (bytes[23] << 8) | bytes[24]
+          : 0,
     );
   }
 
@@ -209,6 +229,7 @@ class SOSPacket {
       'timestamp': timestamp,
       'rssi': rssi,
       'isSynced': isSynced ? 1 : 0,
+      'targetId': targetId,
     };
   }
 
@@ -224,6 +245,7 @@ class SOSPacket {
       rssi: json['rssi'] as int?,
       dbId: json['id'] as int?,
       isSynced: (json['isSynced'] as int?) == 1,
+      targetId: json['targetId'] as int? ?? 0,
     );
   }
 

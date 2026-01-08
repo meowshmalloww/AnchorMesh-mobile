@@ -53,6 +53,9 @@ class MainActivity : FlutterActivity() {
                     "supportsBle5" -> {
                         result.success(bleManager.supportsBle5())
                     }
+                    "checkWifiStatus" -> {
+                        result.success(bleManager.checkWifiStatus())
+                    }
                     else -> {
                         result.notImplemented()
                     }

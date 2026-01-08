@@ -6,7 +6,9 @@ import BackgroundTasks
 @objc class AppDelegate: FlutterAppDelegate {
 
     private var bleEventChannel: FlutterEventChannel?
+    private var platformChannel: FlutterMethodChannel?
     private var isChannelsSetup = false
+    private var lowPowerModeObserver: NSObjectProtocol?
 
     override func application(
         _ application: UIApplication,
@@ -28,8 +30,26 @@ import BackgroundTasks
 
         // Schedule background refresh
         BackgroundTaskManager.shared.scheduleRefresh()
+        
+        // Observe Low Power Mode changes
+        setupLowPowerModeObserver()
 
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+    
+    private func setupLowPowerModeObserver() {
+        lowPowerModeObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.notifyLowPowerModeChanged()
+        }
+    }
+    
+    private func notifyLowPowerModeChanged() {
+        let isLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        platformChannel?.invokeMethod("onLowPowerModeChanged", arguments: isLowPower)
     }
 
     private func setupChannelsIfNeeded() {
@@ -43,7 +63,94 @@ import BackgroundTasks
         }
 
         setupBLEChannels(controller: controller)
+        setupPlatformChannel(controller: controller)
         isChannelsSetup = true
+    }
+    
+    private func setupPlatformChannel(controller: FlutterViewController) {
+        platformChannel = FlutterMethodChannel(
+            name: "com.project_flutter/platform",
+            binaryMessenger: controller.binaryMessenger
+        )
+        
+        platformChannel?.setMethodCallHandler { [weak self] (call, result) in
+            self?.handlePlatformMethodCall(call: call, result: result)
+        }
+    }
+    
+    private func handlePlatformMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        switch call.method {
+        case "isLowPowerModeEnabled":
+            result(ProcessInfo.processInfo.isLowPowerModeEnabled)
+            
+        case "setScreenAlwaysOn":
+            guard let args = call.arguments as? [String: Any],
+                  let enabled = args["enabled"] as? Bool else {
+                result(FlutterError(code: "INVALID_ARGS", message: "Missing enabled parameter", details: nil))
+                return
+            }
+            UIApplication.shared.isIdleTimerDisabled = enabled
+            result(UIApplication.shared.isIdleTimerDisabled)
+            
+        case "registerBackgroundScan":
+            guard let args = call.arguments as? [String: Any],
+                  let serviceUUID = args["serviceUUID"] as? String else {
+                result(FlutterError(code: "INVALID_ARGS", message: "Missing serviceUUID", details: nil))
+                return
+            }
+            // Store for background scanning - BLEManager handles this
+            UserDefaults.standard.set(serviceUUID, forKey: "backgroundServiceUUID")
+            result(true)
+            
+        case "saveStateForRestoration":
+            guard let args = call.arguments as? [String: Any] else {
+                result(FlutterError(code: "INVALID_ARGS", message: "Missing state data", details: nil))
+                return
+            }
+            // Save state for iOS state preservation
+            UserDefaults.standard.set(args["isBroadcasting"], forKey: "restore_isBroadcasting")
+            UserDefaults.standard.set(args["isScanning"], forKey: "restore_isScanning")
+            if let lat = args["latitude"] as? Double {
+                UserDefaults.standard.set(lat, forKey: "restore_latitude")
+            }
+            if let lon = args["longitude"] as? Double {
+                UserDefaults.standard.set(lon, forKey: "restore_longitude")
+            }
+            if let status = args["status"] as? Int {
+                UserDefaults.standard.set(status, forKey: "restore_status")
+            }
+            result(nil)
+            
+        case "restoreState":
+            let isBroadcasting = UserDefaults.standard.bool(forKey: "restore_isBroadcasting")
+            let isScanning = UserDefaults.standard.bool(forKey: "restore_isScanning")
+            let latitude = UserDefaults.standard.double(forKey: "restore_latitude")
+            let longitude = UserDefaults.standard.double(forKey: "restore_longitude")
+            let status = UserDefaults.standard.integer(forKey: "restore_status")
+            
+            if isBroadcasting || isScanning {
+                result([
+                    "isBroadcasting": isBroadcasting,
+                    "isScanning": isScanning,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "status": status
+                ])
+            } else {
+                result(nil)
+            }
+            
+        case "requestIgnoreBatteryOptimization":
+            // iOS doesn't support this
+            result(true)
+            
+        case "isIgnoringBatteryOptimization":
+            // iOS doesn't have battery optimization like Android
+            result(true)
+            
+        default:
+            result(FlutterMethodNotImplemented)
+        }
     }
     
     private func setupBLEChannels(controller: FlutterViewController) {
@@ -100,6 +207,10 @@ import BackgroundTasks
         case "getDeviceUuid":
             result(BLEManager.shared.getDeviceUUID())
             
+        case "supportsBle5":
+            // iPhone 8 and later support BLE 5
+            result(true)
+            
         case "requestBatteryExemption":
             // iOS doesn't support this, always return true
             result(true)
@@ -112,6 +223,12 @@ import BackgroundTasks
     override func applicationWillTerminate(_ application: UIApplication) {
         // Clean up BLE resources before app terminates
         BLEManager.shared.stopAll()
+        
+        // Remove observer
+        if let observer = lowPowerModeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        
         super.applicationWillTerminate(application)
     }
 }
