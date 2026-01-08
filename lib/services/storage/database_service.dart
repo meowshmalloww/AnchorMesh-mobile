@@ -66,6 +66,19 @@ class DatabaseService {
   Future<bool> saveMessage(String messageId, List<int> packetData, int hopCount) async {
     final db = await database;
     try {
+      // Check if message already exists (deduplication)
+      final existing = await db.query(
+        'messages',
+        where: 'message_id = ?',
+        whereArgs: [messageId],
+        limit: 1,
+      );
+      
+      if (existing.isNotEmpty) {
+        return false; // Already have this message
+      }
+      
+      // Insert new message
       await db.insert(
         'messages',
         {
@@ -75,29 +88,10 @@ class DatabaseService {
           'received_at': DateTime.now().millisecondsSinceEpoch,
           'hop_count': hopCount,
         },
-        conflictAlgorithm: ConflictAlgorithm.ignore, // Deduplication strategy
-      );
-      // Check if it was actually inserted
-      final List<Map> maps = await db.query(
-        'messages',
-        where: 'message_id = ? AND received_at = ?',
-        whereArgs: [messageId, DateTime.now().millisecondsSinceEpoch], // Loose check, better logic below
+        conflictAlgorithm: ConflictAlgorithm.ignore,
       );
       
-      // Better check: If insert ignored, row count won't increase. 
-      // But standard insert returns ID or 0.
-      // Simplest: Check if it exists BEFORE insert? No, race condition.
-      // ConflictAlgorithm.ignore returns the ID if inserted, or null/0 if ignored.
-      // Wait, sqflite insert returns ID of inserted row. If ignored, it might depend on driver.
-      
-      // Let's rely on query for existence if we really need to know "isNew".
-      // Optimized: Just Insert. If we need to know if we should rebroadcast, we can check 
-      // if we already have it.
-      
-      // For "Is New" check (to trigger notification/rebroadcast logic):
-      final existing = await db.query('messages', where: 'message_id = ?', whereArgs: [messageId]);
-      if (existing.length > 1) return false; // Should satisfy unique constraint
-      return true; 
+      return true; // New message saved
     } catch (e) {
       return false;
     }

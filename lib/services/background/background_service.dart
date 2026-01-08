@@ -2,7 +2,6 @@ import 'package:workmanager/workmanager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
 import '../storage/database_service.dart';
-import '../ble/ble_mesh_service.dart';
 
 // Task identifiers
 const String checkConnectivityTask = "com.example.project_flutter.check_connectivity";

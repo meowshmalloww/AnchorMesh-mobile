@@ -1,5 +1,5 @@
-/// API Service
-/// Handles HTTP and WebSocket communication with the backend server
+// API Service
+// Handles HTTP and WebSocket communication with the backend server
 
 import 'dart:async';
 import 'dart:convert';

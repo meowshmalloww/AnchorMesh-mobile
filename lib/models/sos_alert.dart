@@ -1,5 +1,5 @@
-/// SOS Alert Model
-/// Represents an emergency SOS message in the mesh network
+// SOS Alert Model
+// Represents an emergency SOS message in the mesh network
 
 import 'dart:convert';
 

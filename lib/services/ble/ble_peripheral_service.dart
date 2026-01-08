@@ -1,8 +1,7 @@
-/// BLE Peripheral Service
-/// Platform channel for native BLE advertising/peripheral mode
+// BLE Peripheral Service
+// Platform channel for native BLE advertising/peripheral mode
 
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 

@@ -1,5 +1,5 @@
-/// Connectivity Service
-/// Monitors network connectivity and determines best communication path
+// Connectivity Service
+// Monitors network connectivity and determines best communication path
 
 import 'dart:async';
 import 'dart:io';

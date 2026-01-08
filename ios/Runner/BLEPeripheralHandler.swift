@@ -13,10 +13,10 @@ class BLEPeripheralHandler: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var methodChannel: FlutterMethodChannel?
 
     // Service and Characteristic UUIDs
-    private let sosServiceUUID = CBUUID(string: "0000sos0-0000-1000-8000-00805f9b34fb")
-    private let sosAlertCharUUID = CBUUID(string: "0000sos1-0000-1000-8000-00805f9b34fb")
-    private let deviceInfoCharUUID = CBUUID(string: "0000sos2-0000-1000-8000-00805f9b34fb")
-    private let ackCharUUID = CBUUID(string: "0000sos3-0000-1000-8000-00805f9b34fb")
+    private let sosServiceUUID = CBUUID(string: "00005050-0000-1000-8000-00805f9b34fb")
+    private let sosAlertCharUUID = CBUUID(string: "00005051-0000-1000-8000-00805f9b34fb")
+    private let deviceInfoCharUUID = CBUUID(string: "00005052-0000-1000-8000-00805f9b34fb")
+    private let ackCharUUID = CBUUID(string: "00005053-0000-1000-8000-00805f9b34fb")
 
     // GATT Service and Characteristics
     private var sosService: CBMutableService?

@@ -472,7 +472,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
           width: 48,
           height: 48,
           decoration: BoxDecoration(
-            color: proximityColor.withOpacity(0.2),
+            color: proximityColor.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(

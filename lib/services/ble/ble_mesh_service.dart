@@ -1,5 +1,5 @@
-/// BLE Mesh Service
-/// Handles Bluetooth Low Energy mesh networking for SOS relay
+// BLE Mesh Service
+// Handles Bluetooth Low Energy mesh networking for SOS relay
 
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -14,10 +14,10 @@ import '../storage/database_service.dart';
 
 /// BLE Service UUIDs for SOS Mesh
 class BleUuids {
-  static const String serviceUuid = '0000sos0-0000-1000-8000-00805f9b34fb';
-  static const String sosAlertUuid = '0000sos1-0000-1000-8000-00805f9b34fb';
-  static const String deviceInfoUuid = '0000sos2-0000-1000-8000-00805f9b34fb';
-  static const String ackUuid = '0000sos3-0000-1000-8000-00805f9b34fb';
+  static const String serviceUuid = '00005050-0000-1000-8000-00805f9b34fb';
+  static const String sosAlertUuid = '00005051-0000-1000-8000-00805f9b34fb';
+  static const String deviceInfoUuid = '00005052-0000-1000-8000-00805f9b34fb';
+  static const String ackUuid = '00005053-0000-1000-8000-00805f9b34fb';
 }
 
 /// BLE Mesh configuration
@@ -183,7 +183,11 @@ class BLEMeshService extends ChangeNotifier {
       if (event is BeaconReceivedEvent) {
         _handleReceivedBeacon(event);
       } else if (event is DataReceivedEvent) {
-        _processReceivedSosData(event.data, event.deviceAddress);
+        // Try to parse raw data as beacon
+        final beacon = SOSBeacon.fromBytes(event.data);
+        if (beacon != null) {
+          _handleReceivedBeacon(BeaconReceivedEvent(beacon, 0, event.deviceAddress));
+        }
       } else if (event is PeerConnectedEvent) {
         // Update peer connection state
         final peer = _peers.values.firstWhere(
@@ -321,60 +325,63 @@ class BLEMeshService extends ChangeNotifier {
   }
 
   /// Process a scan result
-  void _processScanResult(ScanResult result) {
-    // Check for our specific Manufacturer Data (0xFFFF)
-    // Note: 0xFFFF is the decimal 65535
+  Future<void> _processScanResult(ScanResult result) async {
+    // 1. Check for Android/Data-Rich Advertisement (Manufacturer Data 0xFFFF)
     final manufacturerData = result.advertisementData.manufacturerData;
-    
-    // Check for our App Header in the data
-    // Usually the key in the map IS the manufacturer ID.
-    // If we use 0xFFFF as the ID:
     if (manufacturerData.containsKey(0xFFFF)) {
        final data = manufacturerData[0xFFFF];
        if (data != null) {
-         // Prepend header to match strict parsing expectations if needed
-         // SOSBeacon.fromBytes expects the full packet including header
-         // The map key is the header/company ID.
-         // So we reconstruct: [0xFF, 0xFF, ...data]
          final fullBytes = [0xFF, 0xFF, ...data];
          final beacon = SOSBeacon.fromBytes(fullBytes);
          if (beacon != null) {
             _handleReceivedBeacon(BeaconReceivedEvent(beacon, result.rssi, result.device.remoteId.str));
+            return;
          }
        }
     }
-  }
 
-  /// Extract device ID from advertisement
-  String? _extractDeviceId(ScanResult result) {
-    // Look for device ID in manufacturer data or service data
-    final manufacturerData = result.advertisementData.manufacturerData;
-    if (manufacturerData.isNotEmpty) {
-      // Parse manufacturer data for device ID
-      final data = manufacturerData.values.first;
-      if (data.length >= 8) {
-        return String.fromCharCodes(data.take(8));
+    // 2. Check for iOS/Silent Advertisement (Service UUID present, but no data)
+    // We look for our specific Service UUID
+    if (result.advertisementData.serviceUuids.contains(Guid(BleUuids.serviceUuid))) {
+      // iOS device found! It likely has the data hidden in the GATT characteristic.
+      // We must connect to read it.
+      // prevent connecting to same device repeatedly in short loop
+      if (!_peers.containsKey(result.device.remoteId.str)) {
+         _connectAndRead(result.device);
       }
     }
-
-    // Fallback to BLE address
-    return result.device.remoteId.str.replaceAll(':', '');
   }
 
-  /// Extract internet availability from advertisement
-  bool _extractHasInternet(ScanResult result) {
-    // Not available in strict beacon
-    return false;
-  }
+  /// Connect to device and read SOS characteristic (for iOS peers)
+  Future<void> _connectAndRead(BluetoothDevice device) async {
+    try {
+      await device.connect(timeout: const Duration(seconds: 5));
+      
+      final services = await device.discoverServices();
+      final sosService = services.firstWhere(
+        (s) => s.uuid == Guid(BleUuids.serviceUuid),
+        orElse: () => throw Exception('Service not found'),
+      );
 
-  /// Check for SOS alerts in advertisement data
-  void _checkForSosInAdvertisement(ScanResult result) {
-    // Deprecated logic, moved to _processScanResult
-  }
+      final characteristic = sosService.characteristics.firstWhere(
+        (c) => c.uuid == Guid(BleUuids.sosAlertUuid),
+        orElse: () => throw Exception('Characteristic not found'),
+      );
 
-  /// Process received SOS data
-  void _processReceivedSosData(List<int> data, String fromAddress) {
-    // Deprecated logic, we use Beacon structure now
+      final value = await characteristic.read();
+      
+      // Attempt to parse SOSBeacon from the read value
+      // The read value should be the raw bytes of SOSBeacon
+      final beacon = SOSBeacon.fromBytes(value);
+      if (beacon != null) {
+         _handleReceivedBeacon(BeaconReceivedEvent(beacon, 0, device.remoteId.str));
+      }
+
+      await device.disconnect();
+    } catch (e) {
+      // Connection or read failed
+      try { await device.disconnect(); } catch (_) {}
+    }
   }
 
   /// Broadcast an SOS alert
@@ -418,21 +425,6 @@ class BLEMeshService extends ChangeNotifier {
       ));
     }
     notifyListeners();
-  }
-
-  /// Send alert to all connected peers
-  Future<void> _sendToPeers(SOSAlert alert) async {
-    // Deprecated: We primarily use advertising (Flood Mesh)
-  }
-
-  /// Connect to a peer and send alert
-  Future<void> _connectAndSend(SOSAlert alert, PeerDevice peer) async {
-    // Deprecated
-  }
-
-  /// Send alert to a specific peer
-  Future<void> _sendAlertToPeer(SOSAlert alert, PeerDevice peer) async {
-    // Deprecated
   }
 
   /// Stop broadcasting an SOS

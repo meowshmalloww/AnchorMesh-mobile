@@ -1,5 +1,5 @@
-/// Device Info Model
-/// Represents local and peer device information
+// Device Info Model
+// Represents local and peer device information
 
 import 'sos_alert.dart';
 

@@ -1,5 +1,5 @@
-/// Peer Device Model
-/// Represents a discovered device in the BLE mesh network
+// Peer Device Model
+// Represents a discovered device in the BLE mesh network
 
 import 'dart:math' as math;
 import 'device_info.dart';

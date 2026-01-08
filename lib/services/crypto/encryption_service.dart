@@ -1,5 +1,5 @@
-/// Encryption Service
-/// Handles message signing and verification for SOS alerts
+// Encryption Service
+// Handles message signing and verification for SOS alerts
 
 import 'dart:convert';
 import 'package:crypto/crypto.dart';

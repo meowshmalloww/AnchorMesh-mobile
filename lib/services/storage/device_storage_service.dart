@@ -1,5 +1,5 @@
-/// Device Storage Service
-/// Handles persistent storage for device ID, server URL, and other settings
+// Device Storage Service
+// Handles persistent storage for device ID, server URL, and other settings
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';

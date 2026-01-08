@@ -8,6 +8,10 @@ import UIKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
+    
+    // Register BLE Handler using PluginRegistry API
+    BLEPeripheralHandler.register(with: self.registrar(forPlugin: "BLEPeripheralHandler")!)
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }

@@ -1,5 +1,5 @@
-/// SOS Manager
-/// Main orchestrator for SOS functionality - coordinates BLE mesh, API, and connectivity
+// SOS Manager
+// Main orchestrator for SOS functionality - coordinates BLE mesh, API, and connectivity
 
 import 'dart:async';
 import 'package:flutter/foundation.dart';

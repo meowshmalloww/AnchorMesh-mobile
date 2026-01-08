@@ -21,10 +21,11 @@ class BLEPeripheralHandler(private val context: Context) : MethodChannel.MethodC
 
     companion object {
         // Service and Characteristic UUIDs
-        val SOS_SERVICE_UUID: UUID = UUID.fromString("0000sos0-0000-1000-8000-00805f9b34fb")
-        val SOS_ALERT_CHAR_UUID: UUID = UUID.fromString("0000sos1-0000-1000-8000-00805f9b34fb")
-        val DEVICE_INFO_CHAR_UUID: UUID = UUID.fromString("0000sos2-0000-1000-8000-00805f9b34fb")
-        val ACK_CHAR_UUID: UUID = UUID.fromString("0000sos3-0000-1000-8000-00805f9b34fb")
+        // Using "505" to look like "SOS" in Hex
+        val SOS_SERVICE_UUID: UUID = UUID.fromString("00005050-0000-1000-8000-00805f9b34fb")
+        val SOS_ALERT_CHAR_UUID: UUID = UUID.fromString("00005051-0000-1000-8000-00805f9b34fb")
+        val DEVICE_INFO_CHAR_UUID: UUID = UUID.fromString("00005052-0000-1000-8000-00805f9b34fb")
+        val ACK_CHAR_UUID: UUID = UUID.fromString("00005053-0000-1000-8000-00805f9b34fb")
     }
 
     private var methodChannel: MethodChannel? = null

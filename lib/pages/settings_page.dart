@@ -115,7 +115,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   children: [
                     ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: Colors.red.withOpacity(0.1),
+                        backgroundColor: Colors.red.withValues(alpha: 0.1),
                         child: const Icon(Icons.person, color: Colors.red),
                       ),
                       title: Text(contact['name']!),
@@ -135,7 +135,7 @@ class _SettingsPageState extends State<SettingsPage> {
               const Divider(height: 1),
               ListTile(
                 leading: CircleAvatar(
-                  backgroundColor: Colors.blue.withOpacity(0.1),
+                  backgroundColor: Colors.blue.withValues(alpha: 0.1),
                   child: const Icon(Icons.add, color: Colors.blue),
                 ),
                 title: const Text("Add Emergency Contact"),
@@ -305,7 +305,7 @@ class _SettingsPageState extends State<SettingsPage> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-          color: Theme.of(context).dividerColor.withOpacity(0.1),
+          color: Theme.of(context).dividerColor.withValues(alpha: 0.1),
         ),
       ),
       clipBehavior: Clip.antiAlias,
@@ -372,6 +372,7 @@ class _SettingsPageState extends State<SettingsPage> {
         title: const Text("Blood Type"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          // ignore: deprecated_member_use - RadioGroup migration pending
           children: bloodTypes.map((type) => RadioListTile<String>(
             title: Text(type),
             value: type,
@@ -480,7 +481,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final controller = TextEditingController(text: _serverUrl);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text("Server URL"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -505,7 +506,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text("Cancel"),
           ),
           TextButton(
@@ -518,9 +519,11 @@ class _SettingsPageState extends State<SettingsPage> {
             onPressed: () async {
               final url = controller.text.trim();
               if (url.isNotEmpty) {
+                final navigator = Navigator.of(dialogContext);
                 await _storageService.setServerUrl(url);
+                if (!mounted) return;
                 setState(() => _serverUrl = url);
-                Navigator.pop(context);
+                navigator.pop();
                 _showSnackBar("Server URL updated. Restart app for changes to take effect.");
               }
             },
