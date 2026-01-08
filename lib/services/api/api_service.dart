@@ -14,7 +14,7 @@ class ApiConfig {
   final String wsUrl;
   final Duration timeout;
 
-  const ApiConfig({
+  ApiConfig({
     required this.baseUrl,
     String? wsUrl,
     this.timeout = const Duration(seconds: 30),

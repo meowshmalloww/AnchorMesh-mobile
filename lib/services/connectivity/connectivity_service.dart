@@ -72,7 +72,7 @@ class ConnectivityState {
 class ConnectivityService extends ChangeNotifier {
   final Connectivity _connectivity;
 
-  StreamSubscription<List<ConnectivityResult>>? _subscription;
+  StreamSubscription<ConnectivityResult>? _subscription;
   ConnectivityState _currentState = ConnectivityState();
   Timer? _qualityCheckTimer;
 
@@ -92,8 +92,8 @@ class ConnectivityService extends ChangeNotifier {
   /// Initialize the service
   Future<void> initialize() async {
     // Get initial state
-    final results = await _connectivity.checkConnectivity();
-    _updateState(results);
+    final result = await _connectivity.checkConnectivity();
+    _updateState(result);
 
     // Listen for changes
     _subscription = _connectivity.onConnectivityChanged.listen(_updateState);
@@ -105,9 +105,9 @@ class ConnectivityService extends ChangeNotifier {
     );
   }
 
-  /// Update state based on connectivity results
-  void _updateState(List<ConnectivityResult> results) {
-    final networkType = _mapToNetworkType(results);
+  /// Update state based on connectivity result
+  void _updateState(ConnectivityResult result) {
+    final networkType = _mapToNetworkType(result);
     final hasInternet = networkType.hasInternet;
 
     _currentState = ConnectivityState(
@@ -126,33 +126,24 @@ class ConnectivityService extends ChangeNotifier {
     }
   }
 
-  /// Map connectivity results to network type
-  NetworkType _mapToNetworkType(List<ConnectivityResult> results) {
-    if (results.isEmpty || results.contains(ConnectivityResult.none)) {
-      return NetworkType.none;
+  /// Map connectivity result to network type
+  NetworkType _mapToNetworkType(ConnectivityResult result) {
+    switch (result) {
+      case ConnectivityResult.wifi:
+        return NetworkType.wifi;
+      case ConnectivityResult.mobile:
+        return NetworkType.mobile;
+      case ConnectivityResult.ethernet:
+        return NetworkType.ethernet;
+      case ConnectivityResult.bluetooth:
+        return NetworkType.bluetooth;
+      case ConnectivityResult.vpn:
+        return NetworkType.vpn;
+      case ConnectivityResult.none:
+        return NetworkType.none;
+      default:
+        return NetworkType.other;
     }
-
-    if (results.contains(ConnectivityResult.wifi)) {
-      return NetworkType.wifi;
-    }
-
-    if (results.contains(ConnectivityResult.mobile)) {
-      return NetworkType.mobile;
-    }
-
-    if (results.contains(ConnectivityResult.ethernet)) {
-      return NetworkType.ethernet;
-    }
-
-    if (results.contains(ConnectivityResult.bluetooth)) {
-      return NetworkType.bluetooth;
-    }
-
-    if (results.contains(ConnectivityResult.vpn)) {
-      return NetworkType.vpn;
-    }
-
-    return NetworkType.other;
   }
 
   /// Check network quality by measuring latency
@@ -197,8 +188,8 @@ class ConnectivityService extends ChangeNotifier {
 
   /// Force refresh connectivity state
   Future<void> refresh() async {
-    final results = await _connectivity.checkConnectivity();
-    _updateState(results);
+    final result = await _connectivity.checkConnectivity();
+    _updateState(result);
   }
 
   /// Dispose resources
