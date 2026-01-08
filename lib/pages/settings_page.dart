@@ -1,6 +1,80 @@
 import 'package:flutter/material.dart';
-import '../services/storage/device_storage_service.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/packet_store.dart';
+import '../services/offline_map_service.dart';
 
+/// Battery saving modes for mesh operation
+enum BatteryMode {
+  /// SOS Active: Always on, max range (6-8 hrs)
+  sosActive(
+    'SOS Active',
+    'Always scanning, maximum reach',
+    0, // Always on
+    0, // No sleep
+    7, // ~6-8 hrs
+    'Max reaction time',
+  ),
+
+  /// Bridge Mode: 30s on, 30s off (12+ hrs)
+  bridge(
+    'Bridge Mode',
+    '30s on / 30s off, balanced',
+    30,
+    30,
+    12,
+    'Fast updates',
+  ),
+
+  /// Battery Saver: 1 min on, 1 min off (24+ hrs)
+  batterySaver(
+    'Battery Saver',
+    '1 min on / 1 min off, efficiency',
+    60,
+    60,
+    24,
+    'Power efficient',
+  ),
+
+  /// Custom: User-defined intervals
+  custom(
+    'Custom',
+    'Set your own intervals',
+    30, // Default
+    30, // Default
+    0, // Depends
+    'Customizable',
+  );
+
+  final String label;
+  final String description;
+  final int scanSeconds;
+  final int sleepSeconds;
+  final int estimatedBatteryHours;
+  final String reactionTime;
+
+  const BatteryMode(
+    this.label,
+    this.description,
+    this.scanSeconds,
+    this.sleepSeconds,
+    this.estimatedBatteryHours,
+    this.reactionTime,
+  );
+}
+
+/// BLE Version options
+enum BLEVersion {
+  legacy('BLE 4.x (Legacy)', 'Compatible with older devices'),
+  modern('BLE 5.x', 'Extended range, faster transfer');
+
+  final String label;
+  final String description;
+
+  const BLEVersion(this.label, this.description);
+}
+
+/// Settings page with battery modes and app configuration
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -9,27 +83,16 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  final DeviceStorageService _storageService = DeviceStorageService();
+  BatteryMode _batteryMode = BatteryMode.bridge;
+  BLEVersion _bleVersion = BLEVersion.modern;
+  bool _autoActivateOnDisaster = true;
+  bool _autoUploadOnInternet = true;
+  bool _showNotifications = true;
+  String _userId = '';
 
-  // User preferences
-  bool _autoShareLocation = true;
-  bool _enableSoundAlerts = true;
-  bool _vibrationEnabled = true;
-
-  // Server settings
-  String _serverUrl = DeviceStorageService.defaultServerUrl;
-  String _deviceId = '';
-  bool _isLoadingSettings = true;
-
-  // Emergency contacts (in real app, store persistently)
-  final List<Map<String, String>> _emergencyContacts = [
-    {'name': 'Emergency Services', 'phone': '911'},
-  ];
-
-  // User profile info
-  String _userName = '';
-  String _bloodType = 'Unknown';
-  String _medicalNotes = '';
+  // Custom mode settings
+  int _customScanSeconds = 30;
+  int _customSleepSeconds = 30;
 
   @override
   void initState() {
@@ -38,538 +101,595 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadSettings() async {
-    await _storageService.initialize();
-    final serverUrl = await _storageService.getServerUrl();
-    final deviceId = await _storageService.getDeviceId();
+    final prefs = await SharedPreferences.getInstance();
+    final userId = await PacketStore.instance.getUserId();
 
-    if (mounted) {
-      setState(() {
-        _serverUrl = serverUrl;
-        _deviceId = deviceId;
-        _isLoadingSettings = false;
-      });
+    setState(() {
+      _batteryMode = BatteryMode.values[prefs.getInt('batteryMode') ?? 1];
+      _bleVersion = BLEVersion.values[prefs.getInt('bleVersion') ?? 1];
+      _autoActivateOnDisaster = prefs.getBool('autoActivate') ?? true;
+      _autoUploadOnInternet = prefs.getBool('autoUpload') ?? true;
+      _showNotifications = prefs.getBool('notifications') ?? true;
+      _userId = userId.toRadixString(16).toUpperCase().padLeft(8, '0');
+      _customScanSeconds = prefs.getInt('customScan') ?? 30;
+      _customSleepSeconds = prefs.getInt('customSleep') ?? 30;
+    });
+  }
+
+  Future<void> _saveSetting(String key, dynamic value) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (value is bool) {
+      await prefs.setBool(key, value);
+    } else if (value is int) {
+      await prefs.setInt(key, value);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDarkMode ? Colors.grey[900] : Colors.grey[50];
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Settings"),
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
-          // Profile Section
-          _buildSectionHeader(context, "Emergency Profile", Icons.person),
-          const SizedBox(height: 8),
-          _buildCard(
-            context,
-            cardColor,
+          // Battery Mode Section
+          _buildSectionCard(
+            title: 'Battery Mode',
+            icon: Icons.battery_charging_full,
+            iconColor: Colors.green,
             children: [
-              _buildProfileTile(
-                context,
-                icon: Icons.badge,
-                title: "Name",
-                subtitle: _userName.isEmpty ? "Tap to add your name" : _userName,
-                onTap: () => _showNameDialog(),
+              ...BatteryMode.values.map(
+                (mode) => _buildBatteryModeOption(mode),
               ),
-              const Divider(height: 1),
-              _buildProfileTile(
-                context,
-                icon: Icons.bloodtype,
-                title: "Blood Type",
-                subtitle: _bloodType,
-                onTap: () => _showBloodTypeDialog(),
-              ),
-              const Divider(height: 1),
-              _buildProfileTile(
-                context,
-                icon: Icons.medical_information,
-                title: "Medical Notes",
-                subtitle: _medicalNotes.isEmpty
-                    ? "Allergies, conditions, medications..."
-                    : _medicalNotes,
-                onTap: () => _showMedicalNotesDialog(),
+              // Custom sliders if custom mode selected
+              if (_batteryMode == BatteryMode.custom) _buildCustomSliders(),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // BLE Version Section
+          _buildSectionCard(
+            title: 'Bluetooth',
+            icon: Icons.bluetooth,
+            iconColor: Colors.blue,
+            children: [
+              ...BLEVersion.values.map(
+                (version) => _buildBLEVersionOption(version),
               ),
             ],
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
 
-          // Emergency Contacts Section
-          _buildSectionHeader(context, "Emergency Contacts", Icons.contacts),
-          const SizedBox(height: 8),
-          _buildCard(
-            context,
-            cardColor,
+          // Automation Section
+          _buildSectionCard(
+            title: 'Automation',
+            icon: Icons.auto_mode,
+            iconColor: Colors.orange,
             children: [
-              ..._emergencyContacts.asMap().entries.map((entry) {
-                final index = entry.key;
-                final contact = entry.value;
-                return Column(
-                  children: [
-                    ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: Colors.red.withOpacity(0.1),
-                        child: const Icon(Icons.person, color: Colors.red),
-                      ),
-                      title: Text(contact['name']!),
-                      subtitle: Text(contact['phone']!),
-                      trailing: index == 0
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.red),
-                              onPressed: () => _removeContact(index),
-                            ),
-                    ),
-                    if (index < _emergencyContacts.length - 1)
-                      const Divider(height: 1),
-                  ],
-                );
-              }),
-              const Divider(height: 1),
+              _buildSwitchTile(
+                icon: Icons.warning_amber,
+                title: 'Auto-activate on disaster',
+                subtitle: 'Start mesh when earthquake detected',
+                value: _autoActivateOnDisaster,
+                onChanged: (value) {
+                  setState(() => _autoActivateOnDisaster = value);
+                  _saveSetting('autoActivate', value);
+                },
+              ),
+              _buildSwitchTile(
+                icon: Icons.cloud_upload,
+                title: 'Auto-upload when online',
+                subtitle: 'Sync SOS data when internet returns',
+                value: _autoUploadOnInternet,
+                onChanged: (value) {
+                  setState(() => _autoUploadOnInternet = value);
+                  _saveSetting('autoUpload', value);
+                },
+              ),
+              _buildSwitchTile(
+                icon: Icons.notifications,
+                title: 'Show notifications',
+                subtitle: 'Alert when SOS signals received',
+                value: _showNotifications,
+                onChanged: (value) {
+                  setState(() => _showNotifications = value);
+                  _saveSetting('notifications', value);
+                },
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Device Info Section
+          _buildSectionCard(
+            title: 'Device',
+            icon: Icons.phone_android,
+            iconColor: Colors.purple,
+            children: [
               ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: Colors.blue.withOpacity(0.1),
-                  child: const Icon(Icons.add, color: Colors.blue),
-                ),
-                title: const Text("Add Emergency Contact"),
-                subtitle: const Text("Add a trusted contact"),
-                onTap: () => _showAddContactDialog(),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          // SOS Preferences Section
-          _buildSectionHeader(context, "SOS Preferences", Icons.sos),
-          const SizedBox(height: 8),
-          _buildCard(
-            context,
-            cardColor,
-            children: [
-              SwitchListTile(
-                secondary: const Icon(Icons.location_on),
-                title: const Text("Auto-share Location"),
-                subtitle: const Text("Include GPS coordinates in SOS alerts"),
-                value: _autoShareLocation,
-                onChanged: (value) {
-                  setState(() => _autoShareLocation = value);
-                },
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                secondary: const Icon(Icons.volume_up),
-                title: const Text("Sound Alerts"),
-                subtitle: const Text("Play alarm sound during SOS"),
-                value: _enableSoundAlerts,
-                onChanged: (value) {
-                  setState(() => _enableSoundAlerts = value);
-                },
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                secondary: const Icon(Icons.vibration),
-                title: const Text("Vibration"),
-                subtitle: const Text("Vibrate when SOS is active"),
-                value: _vibrationEnabled,
-                onChanged: (value) {
-                  setState(() => _vibrationEnabled = value);
-                },
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          // Server Settings Section
-          _buildSectionHeader(context, "Server Settings", Icons.dns),
-          const SizedBox(height: 8),
-          _buildCard(
-            context,
-            cardColor,
-            children: [
-              _buildProfileTile(
-                context,
-                icon: Icons.link,
-                title: "Server URL",
-                subtitle: _isLoadingSettings ? "Loading..." : _serverUrl,
-                onTap: () => _showServerUrlDialog(),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.fingerprint),
-                title: const Text("Device ID"),
-                subtitle: Text(
-                  _isLoadingSettings ? "Loading..." : _deviceId,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withAlpha(30),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.fingerprint,
+                    color: Colors.blue,
+                    size: 20,
                   ),
                 ),
+                title: const Text('Device ID'),
+                subtitle: Text(
+                  _userId,
+                  style: const TextStyle(fontFamily: 'monospace'),
+                ),
                 trailing: IconButton(
-                  icon: const Icon(Icons.copy),
+                  icon: const Icon(Icons.copy, size: 20),
                   onPressed: () {
-                    // Copy to clipboard would go here
-                    _showSnackBar("Device ID copied to clipboard");
+                    Clipboard.setData(ClipboardData(text: _userId));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Device ID copied')),
+                    );
                   },
                 ),
               ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withAlpha(30),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.red,
+                    size: 20,
+                  ),
+                ),
+                title: const Text('Clear local data'),
+                subtitle: const Text('Remove all cached SOS packets'),
+                onTap: _showClearDataDialog,
+              ),
             ],
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
+
+          // Packet Info Section
+          _buildSectionCard(
+            title: 'SOS Packet Info',
+            icon: Icons.info,
+            iconColor: Colors.teal,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '21-byte Packet Structure:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildPacketRow('0-1', 'Header', '0xFFFF'),
+                    _buildPacketRow('2-5', 'User ID', '4B random'),
+                    _buildPacketRow('6-7', 'Sequence', '2B counter'),
+                    _buildPacketRow('8-11', 'Latitude', '4B ×10⁷'),
+                    _buildPacketRow('12-15', 'Longitude', '4B ×10⁷'),
+                    _buildPacketRow('16', 'Status', '1B code'),
+                    _buildPacketRow('17-20', 'Timestamp', '4B Unix'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
 
           // About Section
-          _buildSectionHeader(context, "About", Icons.info),
-          const SizedBox(height: 8),
-          _buildCard(
-            context,
-            cardColor,
+          _buildSectionCard(
+            title: 'About',
+            icon: Icons.info_outline,
+            iconColor: Colors.grey,
             children: [
-              ListTile(
-                leading: const Icon(Icons.description),
-                title: const Text("App Version"),
-                subtitle: const Text("1.0.0"),
+              const ListTile(
+                leading: Icon(Icons.verified, color: Colors.green),
+                title: Text('Version'),
+                subtitle: Text('1.0.0'),
               ),
-              const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.privacy_tip),
-                title: const Text("Privacy Policy"),
+                leading: const Icon(Icons.help_outline, color: Colors.blue),
+                title: const Text('How it works'),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  _showSnackBar("Privacy policy coming soon");
-                },
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.help_outline),
-                title: const Text("Help & Support"),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  _showSnackBar("Help center coming soon");
-                },
+                onTap: () => _showHowItWorksDialog(context),
               ),
             ],
           ),
 
-          const SizedBox(height: 32),
-
-          // Reset button
-          Center(
-            child: TextButton.icon(
-              icon: const Icon(Icons.restore, color: Colors.red),
-              label: const Text(
-                "Reset All Settings",
-                style: TextStyle(color: Colors.red),
-              ),
-              onPressed: () => _showResetConfirmation(),
-            ),
-          ),
-
-          const SizedBox(height: 16),
+          const SizedBox(height: 30),
         ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(BuildContext context, String title, IconData icon) {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: isDarkMode ? Colors.white70 : Colors.black54),
-        const SizedBox(width: 8),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: isDarkMode ? Colors.white70 : Colors.black54,
-            letterSpacing: 0.5,
+  Widget _buildPacketRow(String bytes, String field, String size) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 50,
+            child: Text(
+              bytes,
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.grey[600],
+                fontFamily: 'monospace',
+              ),
+            ),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCard(BuildContext context, Color? cardColor, {required List<Widget> children}) {
-    return Card(
-      color: cardColor,
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: Theme.of(context).dividerColor.withOpacity(0.1),
-        ),
+          SizedBox(
+            width: 80,
+            child: Text(field, style: const TextStyle(fontSize: 12)),
+          ),
+          Text(size, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+        ],
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(children: children),
     );
   }
 
-  Widget _buildProfileTile(
-    BuildContext context, {
+  Widget _buildCustomSliders() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.blue.withAlpha(10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.withAlpha(30)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Scan Duration',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              Text(
+                '${_customScanSeconds}s',
+                style: const TextStyle(
+                  color: Colors.blue,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: _customScanSeconds.toDouble(),
+            min: 5,
+            max: 120,
+            divisions: 23,
+            onChanged: (v) {
+              setState(() => _customScanSeconds = v.round());
+              _saveSetting('customScan', v.round());
+            },
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Sleep Duration',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              Text(
+                '${_customSleepSeconds}s',
+                style: const TextStyle(
+                  color: Colors.blue,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: _customSleepSeconds.toDouble(),
+            min: 5,
+            max: 120,
+            divisions: 23,
+            onChanged: (v) {
+              setState(() => _customSleepSeconds = v.round());
+              _saveSetting('customSleep', v.round());
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionCard({
+    required String title,
+    required IconData icon,
+    required Color iconColor,
+    required List<Widget> children,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.grey[900] : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: isDark ? Colors.black26 : Colors.grey.withAlpha(30),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Row(
+              children: [
+                Icon(icon, color: iconColor, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  title.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[600],
+                    letterSpacing: 1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSwitchTile({
     required IconData icon,
     required String title,
     required String subtitle,
-    required VoidCallback onTap,
+    required bool value,
+    required ValueChanged<bool> onChanged,
   }) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(title),
-      subtitle: Text(
-        subtitle,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap,
+    return SwitchListTile(
+      secondary: Icon(icon, size: 20),
+      title: Text(title, style: const TextStyle(fontSize: 14)),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+      value: value,
+      onChanged: onChanged,
     );
   }
 
-  void _showNameDialog() {
-    final controller = TextEditingController(text: _userName);
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Your Name"),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: "Enter your name",
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              setState(() => _userName = controller.text.trim());
-              Navigator.pop(context);
-            },
-            child: const Text("Save"),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildBatteryModeOption(BatteryMode mode) {
+    final isSelected = _batteryMode == mode;
+    final color = mode == BatteryMode.sosActive
+        ? Colors.red
+        : mode == BatteryMode.batterySaver
+        ? Colors.green
+        : mode == BatteryMode.custom
+        ? Colors.purple
+        : Colors.blue;
 
-  void _showBloodTypeDialog() {
-    final bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown'];
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Blood Type"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: bloodTypes.map((type) => RadioListTile<String>(
-            title: Text(type),
-            value: type,
-            groupValue: _bloodType,
-            onChanged: (value) {
-              setState(() => _bloodType = value!);
-              Navigator.pop(context);
-            },
-          )).toList(),
-        ),
-      ),
-    );
-  }
-
-  void _showMedicalNotesDialog() {
-    final controller = TextEditingController(text: _medicalNotes);
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Medical Notes"),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: "Allergies, conditions, medications...",
-            border: OutlineInputBorder(),
-          ),
-          maxLines: 4,
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              setState(() => _medicalNotes = controller.text.trim());
-              Navigator.pop(context);
-            },
-            child: const Text("Save"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddContactDialog() {
-    final nameController = TextEditingController();
-    final phoneController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Add Emergency Contact"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+    return InkWell(
+      onTap: () {
+        setState(() => _batteryMode = mode);
+        _saveSetting('batteryMode', mode.index);
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
           children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: "Name",
-                border: OutlineInputBorder(),
-              ),
+            Icon(
+              isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+              color: isSelected ? color : Colors.grey,
+              size: 22,
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: phoneController,
-              decoration: const InputDecoration(
-                labelText: "Phone Number",
-                border: OutlineInputBorder(),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        mode.label,
+                        style: TextStyle(
+                          fontWeight: isSelected
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (mode.estimatedBatteryHours > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: color.withAlpha(30),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '~${mode.estimatedBatteryHours}h',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: color,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    mode.description,
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                  ),
+                ],
               ),
-              keyboardType: TextInputType.phone,
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (nameController.text.isNotEmpty && phoneController.text.isNotEmpty) {
-                setState(() {
-                  _emergencyContacts.add({
-                    'name': nameController.text.trim(),
-                    'phone': phoneController.text.trim(),
-                  });
-                });
-                Navigator.pop(context);
-              }
-            },
-            child: const Text("Add"),
-          ),
-        ],
       ),
     );
   }
 
-  void _removeContact(int index) {
-    setState(() {
-      _emergencyContacts.removeAt(index);
-    });
-  }
+  Widget _buildBLEVersionOption(BLEVersion version) {
+    final isSelected = _bleVersion == version;
+    final color = version == BLEVersion.legacy ? Colors.orange : Colors.blue;
 
-  void _showServerUrlDialog() {
-    final controller = TextEditingController(text: _serverUrl);
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Server URL"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return InkWell(
+      onTap: () {
+        setState(() => _bleVersion = version);
+        _saveSetting('bleVersion', version.index);
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
           children: [
-            const Text(
-              "Enter the URL of your SOS relay server. The app will send emergency alerts to this server.",
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+            Icon(
+              isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+              color: isSelected ? color : Colors.grey,
+              size: 22,
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                hintText: "https://sos-relay.example.com",
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.link),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    version.label,
+                    style: TextStyle(
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                      fontSize: 14,
+                    ),
+                  ),
+                  Text(
+                    version.description,
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                  ),
+                ],
               ),
-              keyboardType: TextInputType.url,
-              autofocus: true,
             ),
+            if (version == BLEVersion.modern)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.green.withAlpha(30),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Recommended',
+                  style: TextStyle(
+                    fontSize: 9,
+                    color: Colors.green,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            onPressed: () {
-              controller.text = DeviceStorageService.defaultServerUrl;
-            },
-            child: const Text("Reset"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final url = controller.text.trim();
-              if (url.isNotEmpty) {
-                await _storageService.setServerUrl(url);
-                setState(() => _serverUrl = url);
-                Navigator.pop(context);
-                _showSnackBar("Server URL updated. Restart app for changes to take effect.");
-              }
-            },
-            child: const Text("Save"),
-          ),
-        ],
       ),
     );
   }
 
-  void _showResetConfirmation() {
+  void _showClearDataDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Reset Settings?"),
+        title: const Text('Clear Data?'),
         content: const Text(
-          "This will reset all settings to their defaults. Your emergency contacts will also be removed.",
+          'This will remove all cached SOS packets and offline map data. Your device ID will remain.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              setState(() {
-                _userName = '';
-                _bloodType = 'Unknown';
-                _medicalNotes = '';
-                _emergencyContacts.clear();
-                _emergencyContacts.add({'name': 'Emergency Services', 'phone': '911'});
-                _autoShareLocation = true;
-                _enableSoundAlerts = true;
-                _vibrationEnabled = true;
-              });
-              Navigator.pop(context);
-              _showSnackBar("Settings reset to defaults");
+          TextButton(
+            onPressed: () async {
+              final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
+
+              await PacketStore.instance.clearAllData();
+              await OfflineMapService.instance.clearCache();
+
+              if (!mounted) return;
+              navigator.pop();
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Data cleared successfully')),
+              );
             },
-            child: const Text("Reset", style: TextStyle(color: Colors.white)),
+            child: const Text('Clear', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
   }
 
-  void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+  void _showHowItWorksDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('How Mesh SOS Works'),
+        content: const SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '1. You send an SOS',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Text('Your phone broadcasts via Bluetooth'),
+              SizedBox(height: 12),
+              Text(
+                '2. Phones relay your message',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Text('Nearby phones pick up and rebroadcast'),
+              SizedBox(height: 12),
+              Text(
+                '3. Message reaches rescuers',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Text('When any phone gets internet, your SOS uploads'),
+              SizedBox(height: 12),
+              Text(
+                '4. Even without internet',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Text('Rescuers with the app can see your location directly'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
     );
   }
 }

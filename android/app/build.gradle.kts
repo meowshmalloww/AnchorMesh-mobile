@@ -39,6 +39,11 @@ android {
     }
 }
 
+dependencies {
+    // WorkManager for background tasks
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+}
+
 flutter {
     source = "../.."
 }

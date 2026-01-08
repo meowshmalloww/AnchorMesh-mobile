@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'bottom_taskbar.dart';
+import 'pages/home_page.dart';
 import 'pages/map_page.dart';
 import 'pages/offline_utility_page.dart';
 import 'pages/sos_page.dart';
@@ -15,18 +16,19 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
-  final List<Widget> _pages = [
-    const SOSPage(),
-    const MapPage(),
-    const OfflineUtilityPage(),
-    const SettingsPage(),
-  ];
-
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
     });
   }
+
+  List<Widget> get _pages => [
+    HomePage(onTabChange: _onItemTapped),
+    const MapPage(),
+    const OfflineUtilityPage(),
+    const SOSPage(),
+    const SettingsPage(),
+  ];
 
   @override
   Widget build(BuildContext context) {

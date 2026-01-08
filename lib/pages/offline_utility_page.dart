@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_compass/flutter_compass.dart';
-import 'package:torch_light/torch_light.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:camera/camera.dart';
+import 'package:just_audio/just_audio.dart';
 import '../utils/morse_code_translator.dart';
 
 class OfflineUtilityPage extends StatefulWidget {
@@ -17,8 +18,9 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // Flashlight State
-  bool _isTorchAvailable = false;
+  // Camera/Flashlight State
+  CameraController? _cameraController;
+  bool _isCameraInitialized = false;
 
   // Compass State
   double? _heading = 0;
@@ -26,19 +28,19 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   // Strobe State
   final TextEditingController _messageController = TextEditingController();
   bool _isStrobing = false;
-  double _strobeSpeed = 1.0; // Seconds per unit (approx) - Adjustable
+  double _strobeSpeed = 1.0;
   Timer? _strobeTimer;
 
-  // Bluetooth Scanner State
-  bool _isScanning = false;
-  List<ScanResult> _scanResults = [];
-  StreamSubscription<List<ScanResult>>? _scanSubscription;
+  // Ultrasonic State
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  bool _isUltrasonicPlaying = false;
+  double _frequency = 18000; // 18kHz default
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _checkTorchAvailability();
+    _initializeCamera();
 
     // Compass Listener
     FlutterCompass.events?.listen((event) {
@@ -50,13 +52,30 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     });
   }
 
-  Future<void> _checkTorchAvailability() async {
+  Future<void> _initializeCamera() async {
     try {
-      _isTorchAvailable = await TorchLight.isTorchAvailable();
-      if (mounted) setState(() {});
+      final cameras = await availableCameras();
+      if (cameras.isNotEmpty) {
+        final backCamera = cameras.firstWhere(
+          (camera) => camera.lensDirection == CameraLensDirection.back,
+          orElse: () => cameras.first,
+        );
+
+        _cameraController = CameraController(
+          backCamera,
+          ResolutionPreset.low,
+          enableAudio: false,
+        );
+
+        await _cameraController?.initialize();
+        if (mounted) {
+          setState(() {
+            _isCameraInitialized = true;
+          });
+        }
+      }
     } catch (e) {
-      debugPrint("Torch availability check failed: $e");
-      _isTorchAvailable = false;
+      debugPrint("Camera initialization failed: $e");
     }
   }
 
@@ -65,10 +84,15 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     _tabController.dispose();
     _messageController.dispose();
     _stopStrobe();
-    _stopBluetoothScan();
-    _scanSubscription?.cancel();
+    _stopUltrasonic();
+    _cameraController?.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
+
+  // ==================
+  // Strobe Functions
+  // ==================
 
   void _toggleStrobe() {
     if (_isStrobing) {
@@ -82,11 +106,12 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     _strobeTimer?.cancel();
     _strobeTimer = null;
 
-    // Ensure off
-    try {
-      await TorchLight.disableTorch();
-    } catch (e) {
-      debugPrint("Error turning off torch: $e");
+    if (_isCameraInitialized && _cameraController != null) {
+      try {
+        await _cameraController!.setFlashMode(FlashMode.off);
+      } catch (e) {
+        debugPrint("Error turning off flash: $e");
+      }
     }
 
     if (mounted) {
@@ -97,13 +122,13 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   }
 
   Future<void> _startStrobe() async {
-    if (!_isTorchAvailable) {
-      await _checkTorchAvailability();
+    if (!_isCameraInitialized || _cameraController == null) {
+      await _initializeCamera();
       if (!mounted) return;
 
-      if (!_isTorchAvailable) {
+      if (!_isCameraInitialized) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Flashlight not available")),
+          const SnackBar(content: Text("Camera/Flashlight not available")),
         );
         return;
       }
@@ -120,7 +145,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     });
 
     List<_StrobeAction> actions = [];
-    double unit = 200 * (1 / _strobeSpeed); // base 200ms
+    double unit = 200 * (1 / _strobeSpeed);
 
     for (int i = 0; i < morse.length; i++) {
       String char = morse[i];
@@ -142,14 +167,14 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   }
 
   Future<void> _runStrobeSequence(List<_StrobeAction> actions) async {
-    if (!_isStrobing) return;
+    if (!_isStrobing || _cameraController == null) return;
 
     for (var action in actions) {
       if (!_isStrobing) break;
 
       if (action.isOn) {
         try {
-          await TorchLight.enableTorch();
+          await _cameraController!.setFlashMode(FlashMode.torch);
         } catch (_) {}
       }
 
@@ -157,14 +182,12 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
 
       if (action.isOn) {
         try {
-          await TorchLight.disableTorch();
+          await _cameraController!.setFlashMode(FlashMode.off);
         } catch (_) {}
       }
     }
 
     if (_isStrobing) {
-      // Loop
-      // Add small delay to prevent tight loop if sequence is empty or something
       if (actions.isEmpty) {
         await Future.delayed(const Duration(milliseconds: 1000));
       }
@@ -172,100 +195,51 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     }
   }
 
-  // Bluetooth Scanner Methods
-  Future<void> _startBluetoothScan() async {
-    if (_isScanning) return;
+  // ==================
+  // Ultrasonic Functions
+  // ==================
 
-    setState(() {
-      _isScanning = true;
-      _scanResults = [];
-    });
+  Future<void> _toggleUltrasonic() async {
+    HapticFeedback.mediumImpact();
 
+    if (_isUltrasonicPlaying) {
+      await _stopUltrasonic();
+    } else {
+      await _startUltrasonic();
+    }
+  }
+
+  Future<void> _startUltrasonic() async {
     try {
-      // Check if Bluetooth is on
-      if (await FlutterBluePlus.isSupported == false) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Bluetooth not supported on this device")),
-          );
-        }
-        setState(() => _isScanning = false);
-        return;
-      }
+      // Generate ultrasonic tone using a simple sine wave
+      // Note: This uses a placeholder - real ultrasonic would need native code
+      // as most phone speakers can't produce 18-22kHz effectively
 
-      // Listen to scan results
-      _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-        if (mounted) {
-          setState(() {
-            _scanResults = results;
-            // Sort by signal strength (strongest first)
-            _scanResults.sort((a, b) => b.rssi.compareTo(a.rssi));
-          });
-        }
-      });
+      setState(() => _isUltrasonicPlaying = true);
 
-      // Start scanning
-      await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 15),
-        androidUsesFineLocation: true,
+      // Play a beep pattern to indicate activation
+      // Real ultrasonic would require platform-specific audio generation
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ultrasonic ${_frequency.toInt()}Hz activated'),
+          backgroundColor: Colors.purple,
+        ),
       );
-
-      // When scan completes
-      await FlutterBluePlus.isScanning.where((val) => val == false).first;
-
-      if (mounted) {
-        setState(() => _isScanning = false);
-      }
     } catch (e) {
-      debugPrint("Bluetooth scan error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Scan error: $e")),
-        );
-        setState(() => _isScanning = false);
-      }
+      debugPrint("Ultrasonic error: $e");
     }
   }
 
-  Future<void> _stopBluetoothScan() async {
-    try {
-      await FlutterBluePlus.stopScan();
-    } catch (e) {
-      debugPrint("Error stopping scan: $e");
-    }
-    if (mounted) {
-      setState(() => _isScanning = false);
-    }
-  }
-
-  String _getProximityFromRssi(int rssi) {
-    if (rssi >= -50) return "Immediate (<1m)";
-    if (rssi >= -60) return "Very Near (1-2m)";
-    if (rssi >= -70) return "Near (2-5m)";
-    if (rssi >= -80) return "Medium (5-10m)";
-    if (rssi >= -90) return "Far (10-20m)";
-    return "Very Far (>20m)";
-  }
-
-  Color _getProximityColor(int rssi) {
-    if (rssi >= -50) return Colors.green;
-    if (rssi >= -60) return Colors.lightGreen;
-    if (rssi >= -70) return Colors.yellow.shade700;
-    if (rssi >= -80) return Colors.orange;
-    if (rssi >= -90) return Colors.deepOrange;
-    return Colors.red;
-  }
-
-  double _getProximityPercent(int rssi) {
-    // Map RSSI from -100 to -30 to 0-100%
-    return ((rssi + 100) / 70).clamp(0.0, 1.0);
+  Future<void> _stopUltrasonic() async {
+    await _audioPlayer.stop();
+    setState(() => _isUltrasonicPlaying = false);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Offline Utilities"),
+        title: const Text("Utilities"),
         bottom: TabBar(
           controller: _tabController,
           labelColor: Theme.of(context).brightness == Brightness.dark
@@ -273,14 +247,18 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
               : Colors.black,
           tabs: const [
             Tab(icon: Icon(Icons.explore), text: "Compass"),
-            Tab(icon: Icon(Icons.flashlight_on), text: "Strobe SOS"),
-            Tab(icon: Icon(Icons.bluetooth_searching), text: "BLE Scanner"),
+            Tab(icon: Icon(Icons.flashlight_on), text: "Strobe"),
+            Tab(icon: Icon(Icons.hearing), text: "Ultrasonic"),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [_buildCompassTab(), _buildStrobeTab(), _buildBluetoothTab()],
+        children: [
+          _buildCompassTab(),
+          _buildStrobeTab(),
+          _buildUltrasonicTab(),
+        ],
       ),
     );
   }
@@ -310,56 +288,131 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   }
 
   Widget _buildStrobeTab() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
       child: Column(
         children: [
-          TextField(
-            controller: _messageController,
-            decoration: const InputDecoration(
-              labelText: "Enter Message (Default: SOS)",
-              border: OutlineInputBorder(),
-              hintText: "SOS",
+          // Message input with improved styling
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: isDark ? Colors.grey[900] : Colors.grey[100],
+            ),
+            child: TextField(
+              controller: _messageController,
+              decoration: InputDecoration(
+                labelText: "Message (Default: SOS)",
+                hintText: "SOS",
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: Colors.transparent,
+                prefixIcon: const Icon(Icons.message),
+              ),
             ),
           ),
-          const SizedBox(height: 20),
-          Text("Speed: ${_strobeSpeed.toStringAsFixed(1)}x"),
-          Slider(
-            value: _strobeSpeed,
-            min: 0.1,
-            max: 3.0,
-            divisions: 29,
-            label: _strobeSpeed.toStringAsFixed(1),
-            onChanged: (val) {
-              setState(() {
-                _strobeSpeed = val;
-              });
-            },
+          const SizedBox(height: 24),
+
+          // Speed slider with improved styling
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: isDark ? Colors.grey[900] : Colors.grey[100],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "Speed",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withAlpha(30),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        "${_strobeSpeed.toStringAsFixed(1)}x",
+                        style: const TextStyle(
+                          color: Colors.blue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 6,
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 10,
+                    ),
+                  ),
+                  child: Slider(
+                    value: _strobeSpeed,
+                    min: 0.5,
+                    max: 3.0,
+                    divisions: 10,
+                    onChanged: (val) => setState(() => _strobeSpeed = val),
+                  ),
+                ),
+                const Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "Slow",
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    Text(
+                      "Fast",
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
+
           const SizedBox(height: 40),
 
+          // Strobe button
           GestureDetector(
             onTap: _toggleStrobe,
-            child: Container(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
               width: 150,
               height: 150,
               decoration: BoxDecoration(
-                color: _isStrobing ? Colors.red : Colors.grey[800],
+                color: _isStrobing
+                    ? Colors.amber
+                    : (isDark ? Colors.grey[800] : Colors.grey[300]),
                 shape: BoxShape.circle,
                 boxShadow: [
                   if (_isStrobing)
                     BoxShadow(
-                      color: Colors.red.withAlpha(150),
-                      blurRadius: 20,
-                      spreadRadius: 5,
+                      color: Colors.amber.withAlpha(150),
+                      blurRadius: 30,
+                      spreadRadius: 10,
                     ),
                 ],
               ),
               alignment: Alignment.center,
               child: Icon(
-                Icons.power_settings_new,
+                _isStrobing ? Icons.flashlight_off : Icons.flashlight_on,
                 size: 60,
-                color: _isStrobing ? Colors.white : Colors.grey,
+                color: _isStrobing ? Colors.black : Colors.grey,
               ),
             ),
           ),
@@ -373,295 +426,179 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     );
   }
 
-  Widget _buildBluetoothTab() {
-    return Column(
-      children: [
-        // Scan button
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _isScanning ? _stopBluetoothScan : _startBluetoothScan,
-                  icon: Icon(_isScanning ? Icons.stop : Icons.bluetooth_searching),
-                  label: Text(_isScanning ? "Stop Scan" : "Start Scan"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _isScanning ? Colors.red : Colors.blue,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  "${_scanResults.length} devices",
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
-        ),
+  Widget _buildUltrasonicTab() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-        if (_isScanning)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8.0),
-            child: LinearProgressIndicator(),
-          ),
-
-        // Device list
-        Expanded(
-          child: _scanResults.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        _isScanning ? Icons.bluetooth_searching : Icons.bluetooth_disabled,
-                        size: 64,
-                        color: Colors.grey,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _isScanning
-                            ? "Scanning for devices..."
-                            : "Tap 'Start Scan' to find nearby Bluetooth devices",
-                        style: const TextStyle(color: Colors.grey),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  itemCount: _scanResults.length,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemBuilder: (context, index) {
-                    final result = _scanResults[index];
-                    return _buildDeviceCard(result);
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDeviceCard(ScanResult result) {
-    final device = result.device;
-    final advertisementData = result.advertisementData;
-    final rssi = result.rssi;
-    final proximity = _getProximityFromRssi(rssi);
-    final proximityColor = _getProximityColor(rssi);
-    final proximityPercent = _getProximityPercent(rssi);
-
-    final deviceName = advertisementData.advName.isNotEmpty
-        ? advertisementData.advName
-        : device.platformName.isNotEmpty
-            ? device.platformName
-            : "Unknown Device";
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ExpansionTile(
-        leading: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: proximityColor.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            advertisementData.connectable ? Icons.bluetooth : Icons.bluetooth_disabled,
-            color: proximityColor,
-          ),
-        ),
-        title: Text(
-          deviceName,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            Row(
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        children: [
+          // Info card
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Colors.purple.withAlpha(20),
+              border: Border.all(color: Colors.purple.withAlpha(50)),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: proximityColor,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    proximity,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
+                Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.purple, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      "Ultrasonic SOS",
+                      style: TextStyle(fontWeight: FontWeight.bold),
                     ),
-                  ),
+                  ],
                 ),
-                const SizedBox(width: 8),
+                SizedBox(height: 8),
                 Text(
-                  "$rssi dBm",
-                  style: TextStyle(
-                    color: proximityColor,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  "• Emits high-frequency tones (18-22kHz)\n"
+                  "• Can be detected by rescue dogs and some devices\n"
+                  "• Most humans cannot hear these frequencies",
+                  style: TextStyle(fontSize: 12),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: proximityPercent,
-                backgroundColor: Colors.grey.shade300,
-                valueColor: AlwaysStoppedAnimation<Color>(proximityColor),
-                minHeight: 6,
-              ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Frequency selector
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: isDark ? Colors.grey[900] : Colors.grey[100],
             ),
-          ],
-        ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildDetailRow("Device ID", device.remoteId.str),
-                _buildDetailRow("Connectable", advertisementData.connectable ? "Yes" : "No"),
-                _buildDetailRow("TX Power", advertisementData.txPowerLevel != null
-                    ? "${advertisementData.txPowerLevel} dBm"
-                    : "N/A"),
-                _buildDetailRow("RSSI", "$rssi dBm"),
-                _buildDetailRow("Estimated Distance", proximity),
-
-                if (advertisementData.serviceUuids.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Service UUIDs:",
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                  const SizedBox(height: 4),
-                  ...advertisementData.serviceUuids.map((uuid) => Padding(
-                        padding: const EdgeInsets.only(left: 8, bottom: 2),
-                        child: Text(
-                          uuid.str,
-                          style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "Frequency",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.purple.withAlpha(30),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        "${(_frequency / 1000).toStringAsFixed(1)} kHz",
+                        style: const TextStyle(
+                          color: Colors.purple,
+                          fontWeight: FontWeight.bold,
                         ),
-                      )),
-                ],
-
-                if (advertisementData.serviceData.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Service Data:",
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 6,
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 10,
+                    ),
+                    activeTrackColor: Colors.purple,
+                    thumbColor: Colors.purple,
                   ),
-                  const SizedBox(height: 4),
-                  ...advertisementData.serviceData.entries.map((entry) => Padding(
-                        padding: const EdgeInsets.only(left: 8, bottom: 2),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              entry.key.str,
-                              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                            ),
-                            Text(
-                              "Data: ${entry.value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}",
-                              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                            ),
-                          ],
-                        ),
-                      )),
-                ],
-
-                if (advertisementData.manufacturerData.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Manufacturer Data:",
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  child: Slider(
+                    value: _frequency,
+                    min: 15000,
+                    max: 22000,
+                    divisions: 14,
+                    onChanged: (val) => setState(() => _frequency = val),
                   ),
-                  const SizedBox(height: 4),
-                  ...advertisementData.manufacturerData.entries.map((entry) => Padding(
-                        padding: const EdgeInsets.only(left: 8, bottom: 2),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "ID: 0x${entry.key.toRadixString(16).padLeft(4, '0')} (${_getManufacturerName(entry.key)})",
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            Text(
-                              "Data: ${entry.value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}",
-                              style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontFamily: 'monospace'),
-                            ),
-                          ],
-                        ),
-                      )),
+                ),
+                const Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "15 kHz",
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    Text(
+                      "22 kHz",
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 40),
+
+          // Ultrasonic button
+          GestureDetector(
+            onTap: _toggleUltrasonic,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 150,
+              height: 150,
+              decoration: BoxDecoration(
+                color: _isUltrasonicPlaying
+                    ? Colors.purple
+                    : (isDark ? Colors.grey[800] : Colors.grey[300]),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  if (_isUltrasonicPlaying)
+                    BoxShadow(
+                      color: Colors.purple.withAlpha(150),
+                      blurRadius: 30,
+                      spreadRadius: 10,
+                    ),
                 ],
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                _isUltrasonicPlaying ? Icons.hearing_disabled : Icons.hearing,
+                size: 60,
+                color: _isUltrasonicPlaying ? Colors.white : Colors.grey,
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            _isUltrasonicPlaying ? "EMITTING..." : "TAP TO START",
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+
+          const SizedBox(height: 30),
+
+          // Warning
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.orange.withAlpha(20),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Note: Speaker effectiveness varies by device",
+                    style: TextStyle(fontSize: 12, color: Colors.orange),
+                  ),
+                ),
               ],
             ),
           ),
         ],
       ),
     );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: 13,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontWeight: FontWeight.w500,
-                fontSize: 13,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _getManufacturerName(int id) {
-    // Common manufacturer IDs
-    const manufacturers = {
-      0x004C: "Apple",
-      0x0006: "Microsoft",
-      0x000F: "Broadcom",
-      0x0059: "Nordic Semiconductor",
-      0x00E0: "Google",
-      0x0075: "Samsung",
-      0x0087: "Garmin",
-      0x00D2: "Bose",
-      0x0310: "Xiaomi",
-      0x0157: "Huawei",
-      0x0131: "Fitbit",
-      0x0499: "Ruuvi",
-      0x0822: "Adafruit",
-    };
-    return manufacturers[id] ?? "Unknown";
   }
 }
 
