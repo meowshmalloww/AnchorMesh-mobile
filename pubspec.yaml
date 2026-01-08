@@ -32,6 +32,12 @@ dependencies:
   # Security & Storage
   flutter_secure_storage: ^9.0.0
   crypto: ^3.0.3
+  sqflite: ^2.3.0
+  path_provider: ^2.1.1
+  shared_preferences: ^2.2.2
+
+  # Background Processing
+  workmanager: ^0.5.2
 
   # Device Info
   device_info_plus: ^9.1.1

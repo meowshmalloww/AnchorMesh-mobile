@@ -1,12 +1,13 @@
 /// SOS Emergency Page
 /// Main UI for initiating and managing SOS alerts
 
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:provider/provider.dart';
 import '../models/sos_alert.dart';
 import '../models/device_info.dart';
 import '../services/sos/sos_manager.dart';
+import '../services/storage/device_storage_service.dart';
 
 /// Broadcast mode selection
 enum BroadcastMode { legacy, extended }
@@ -50,17 +51,26 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   }
 
   Future<void> _initializeServices() async {
+    // Initialize storage and get persistent device ID and server URL
+    final storageService = DeviceStorageService();
+    await storageService.initialize();
+
+    final deviceId = await storageService.getDeviceId();
+    final serverUrl = await storageService.getServerUrl();
+
     _sosManager = SOSManager(
-      config: const SOSManagerConfig(
-        serverBaseUrl: 'http://localhost:3000', // Update with your server URL
+      config: SOSManagerConfig(
+        serverBaseUrl: serverUrl,
       ),
     );
 
-    // Create local device info
-    final deviceId = DateTime.now().millisecondsSinceEpoch.toString();
+    // Determine platform
+    final platform = Platform.isIOS ? DevicePlatform.ios : DevicePlatform.android;
+
+    // Create local device info with persistent device ID
     final localDevice = LocalDevice(
       deviceId: deviceId,
-      platform: DevicePlatform.ios, // or android based on platform
+      platform: platform,
       appVersion: '1.0.0',
       bleCapabilities: BleCapabilities(
         supportsExtended: _selectedMode == BroadcastMode.extended,

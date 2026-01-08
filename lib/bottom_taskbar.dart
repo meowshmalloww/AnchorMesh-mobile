@@ -36,17 +36,16 @@ class CustomBottomBar extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildNavBarItem(context, Icons.home_rounded, "Home", 0),
-              _buildNavBarItem(context, Icons.map_rounded, "Map", 1),
-              _buildNavBarItem(context, Icons.build_rounded, "Offline", 2),
               _buildNavBarItem(
                 context,
                 Icons.support_rounded,
                 "SOS",
-                3,
+                0,
                 isSOS: true,
               ),
-              _buildNavBarItem(context, Icons.settings_rounded, "Settings", 4),
+              _buildNavBarItem(context, Icons.map_rounded, "Map", 1),
+              _buildNavBarItem(context, Icons.build_rounded, "Utilities", 2),
+              _buildNavBarItem(context, Icons.settings_rounded, "Settings", 3),
             ],
           ),
         ),

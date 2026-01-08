@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:torch_light/torch_light.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../utils/morse_code_translator.dart';
 
 class OfflineUtilityPage extends StatefulWidget {
@@ -28,10 +29,15 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   double _strobeSpeed = 1.0; // Seconds per unit (approx) - Adjustable
   Timer? _strobeTimer;
 
+  // Bluetooth Scanner State
+  bool _isScanning = false;
+  List<ScanResult> _scanResults = [];
+  StreamSubscription<List<ScanResult>>? _scanSubscription;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _checkTorchAvailability();
 
     // Compass Listener
@@ -59,6 +65,8 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     _tabController.dispose();
     _messageController.dispose();
     _stopStrobe();
+    _stopBluetoothScan();
+    _scanSubscription?.cancel();
     super.dispose();
   }
 
@@ -164,6 +172,95 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     }
   }
 
+  // Bluetooth Scanner Methods
+  Future<void> _startBluetoothScan() async {
+    if (_isScanning) return;
+
+    setState(() {
+      _isScanning = true;
+      _scanResults = [];
+    });
+
+    try {
+      // Check if Bluetooth is on
+      if (await FlutterBluePlus.isSupported == false) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Bluetooth not supported on this device")),
+          );
+        }
+        setState(() => _isScanning = false);
+        return;
+      }
+
+      // Listen to scan results
+      _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
+        if (mounted) {
+          setState(() {
+            _scanResults = results;
+            // Sort by signal strength (strongest first)
+            _scanResults.sort((a, b) => b.rssi.compareTo(a.rssi));
+          });
+        }
+      });
+
+      // Start scanning
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 15),
+        androidUsesFineLocation: true,
+      );
+
+      // When scan completes
+      await FlutterBluePlus.isScanning.where((val) => val == false).first;
+
+      if (mounted) {
+        setState(() => _isScanning = false);
+      }
+    } catch (e) {
+      debugPrint("Bluetooth scan error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Scan error: $e")),
+        );
+        setState(() => _isScanning = false);
+      }
+    }
+  }
+
+  Future<void> _stopBluetoothScan() async {
+    try {
+      await FlutterBluePlus.stopScan();
+    } catch (e) {
+      debugPrint("Error stopping scan: $e");
+    }
+    if (mounted) {
+      setState(() => _isScanning = false);
+    }
+  }
+
+  String _getProximityFromRssi(int rssi) {
+    if (rssi >= -50) return "Immediate (<1m)";
+    if (rssi >= -60) return "Very Near (1-2m)";
+    if (rssi >= -70) return "Near (2-5m)";
+    if (rssi >= -80) return "Medium (5-10m)";
+    if (rssi >= -90) return "Far (10-20m)";
+    return "Very Far (>20m)";
+  }
+
+  Color _getProximityColor(int rssi) {
+    if (rssi >= -50) return Colors.green;
+    if (rssi >= -60) return Colors.lightGreen;
+    if (rssi >= -70) return Colors.yellow.shade700;
+    if (rssi >= -80) return Colors.orange;
+    if (rssi >= -90) return Colors.deepOrange;
+    return Colors.red;
+  }
+
+  double _getProximityPercent(int rssi) {
+    // Map RSSI from -100 to -30 to 0-100%
+    return ((rssi + 100) / 70).clamp(0.0, 1.0);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -177,12 +274,13 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
           tabs: const [
             Tab(icon: Icon(Icons.explore), text: "Compass"),
             Tab(icon: Icon(Icons.flashlight_on), text: "Strobe SOS"),
+            Tab(icon: Icon(Icons.bluetooth_searching), text: "BLE Scanner"),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [_buildCompassTab(), _buildStrobeTab()],
+        children: [_buildCompassTab(), _buildStrobeTab(), _buildBluetoothTab()],
       ),
     );
   }
@@ -273,6 +371,297 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
         ],
       ),
     );
+  }
+
+  Widget _buildBluetoothTab() {
+    return Column(
+      children: [
+        // Scan button
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isScanning ? _stopBluetoothScan : _startBluetoothScan,
+                  icon: Icon(_isScanning ? Icons.stop : Icons.bluetooth_searching),
+                  label: Text(_isScanning ? "Stop Scan" : "Start Scan"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _isScanning ? Colors.red : Colors.blue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  "${_scanResults.length} devices",
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        if (_isScanning)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8.0),
+            child: LinearProgressIndicator(),
+          ),
+
+        // Device list
+        Expanded(
+          child: _scanResults.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _isScanning ? Icons.bluetooth_searching : Icons.bluetooth_disabled,
+                        size: 64,
+                        color: Colors.grey,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _isScanning
+                            ? "Scanning for devices..."
+                            : "Tap 'Start Scan' to find nearby Bluetooth devices",
+                        style: const TextStyle(color: Colors.grey),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: _scanResults.length,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemBuilder: (context, index) {
+                    final result = _scanResults[index];
+                    return _buildDeviceCard(result);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDeviceCard(ScanResult result) {
+    final device = result.device;
+    final advertisementData = result.advertisementData;
+    final rssi = result.rssi;
+    final proximity = _getProximityFromRssi(rssi);
+    final proximityColor = _getProximityColor(rssi);
+    final proximityPercent = _getProximityPercent(rssi);
+
+    final deviceName = advertisementData.advName.isNotEmpty
+        ? advertisementData.advName
+        : device.platformName.isNotEmpty
+            ? device.platformName
+            : "Unknown Device";
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ExpansionTile(
+        leading: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: proximityColor.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            advertisementData.connectable ? Icons.bluetooth : Icons.bluetooth_disabled,
+            color: proximityColor,
+          ),
+        ),
+        title: Text(
+          deviceName,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: proximityColor,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    proximity,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  "$rssi dBm",
+                  style: TextStyle(
+                    color: proximityColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: proximityPercent,
+                backgroundColor: Colors.grey.shade300,
+                valueColor: AlwaysStoppedAnimation<Color>(proximityColor),
+                minHeight: 6,
+              ),
+            ),
+          ],
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildDetailRow("Device ID", device.remoteId.str),
+                _buildDetailRow("Connectable", advertisementData.connectable ? "Yes" : "No"),
+                _buildDetailRow("TX Power", advertisementData.txPowerLevel != null
+                    ? "${advertisementData.txPowerLevel} dBm"
+                    : "N/A"),
+                _buildDetailRow("RSSI", "$rssi dBm"),
+                _buildDetailRow("Estimated Distance", proximity),
+
+                if (advertisementData.serviceUuids.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Service UUIDs:",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
+                  ...advertisementData.serviceUuids.map((uuid) => Padding(
+                        padding: const EdgeInsets.only(left: 8, bottom: 2),
+                        child: Text(
+                          uuid.str,
+                          style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                        ),
+                      )),
+                ],
+
+                if (advertisementData.serviceData.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Service Data:",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
+                  ...advertisementData.serviceData.entries.map((entry) => Padding(
+                        padding: const EdgeInsets.only(left: 8, bottom: 2),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              entry.key.str,
+                              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                            ),
+                            Text(
+                              "Data: ${entry.value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}",
+                              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                            ),
+                          ],
+                        ),
+                      )),
+                ],
+
+                if (advertisementData.manufacturerData.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Manufacturer Data:",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
+                  ...advertisementData.manufacturerData.entries.map((entry) => Padding(
+                        padding: const EdgeInsets.only(left: 8, bottom: 2),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "ID: 0x${entry.key.toRadixString(16).padLeft(4, '0')} (${_getManufacturerName(entry.key)})",
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            Text(
+                              "Data: ${entry.value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}",
+                              style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontFamily: 'monospace'),
+                            ),
+                          ],
+                        ),
+                      )),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontWeight: FontWeight.w500,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getManufacturerName(int id) {
+    // Common manufacturer IDs
+    const manufacturers = {
+      0x004C: "Apple",
+      0x0006: "Microsoft",
+      0x000F: "Broadcom",
+      0x0059: "Nordic Semiconductor",
+      0x00E0: "Google",
+      0x0075: "Samsung",
+      0x0087: "Garmin",
+      0x00D2: "Bose",
+      0x0310: "Xiaomi",
+      0x0157: "Huawei",
+      0x0131: "Fitbit",
+      0x0499: "Ruuvi",
+      0x0822: "Adafruit",
+    };
+    return manufacturers[id] ?? "Unknown";
   }
 }
 

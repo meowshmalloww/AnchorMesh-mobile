@@ -2,6 +2,7 @@
 /// Monitors network connectivity and determines best communication path
 
 import 'dart:async';
+import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 
@@ -146,37 +147,53 @@ class ConnectivityService extends ChangeNotifier {
     }
   }
 
-  /// Check network quality by measuring latency
+  /// Check network quality by measuring actual network latency
   Future<void> _checkNetworkQuality() async {
     if (!_currentState.hasInternet) return;
 
     try {
       final stopwatch = Stopwatch()..start();
 
-      // Simple connectivity check - in production, ping your server
-      await Future.delayed(const Duration(milliseconds: 100));
+      // Actually test connectivity by making a real HTTP request
+      // We use Google's generate_204 endpoint which is fast and reliable
+      final uri = Uri.parse('https://www.google.com/generate_204');
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 5);
 
-      stopwatch.stop();
-      final latency = stopwatch.elapsedMilliseconds;
+      try {
+        final request = await client.getUrl(uri);
+        final response = await request.close().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => throw TimeoutException('Network check timed out'),
+        );
 
-      NetworkQuality quality;
-      if (latency < 100) {
-        quality = NetworkQuality.excellent;
-      } else if (latency < 300) {
-        quality = NetworkQuality.good;
-      } else if (latency < 1000) {
-        quality = NetworkQuality.fair;
-      } else {
-        quality = NetworkQuality.poor;
-      }
+        // Drain response to complete the request
+        await response.drain<void>();
 
-      if (quality != _currentState.quality) {
-        _currentState = _currentState.copyWith(quality: quality);
-        _stateController.add(_currentState);
-        notifyListeners();
+        stopwatch.stop();
+        final latency = stopwatch.elapsedMilliseconds;
+
+        NetworkQuality quality;
+        if (latency < 100) {
+          quality = NetworkQuality.excellent;
+        } else if (latency < 300) {
+          quality = NetworkQuality.good;
+        } else if (latency < 1000) {
+          quality = NetworkQuality.fair;
+        } else {
+          quality = NetworkQuality.poor;
+        }
+
+        if (quality != _currentState.quality) {
+          _currentState = _currentState.copyWith(quality: quality);
+          _stateController.add(_currentState);
+          notifyListeners();
+        }
+      } finally {
+        client.close();
       }
     } catch (e) {
-      // Network check failed, assume poor quality
+      // Network check failed, mark as no internet
       _currentState = _currentState.copyWith(
         quality: NetworkQuality.poor,
         hasInternet: false,

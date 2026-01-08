@@ -3,21 +3,48 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../models/sos_alert.dart';
 import '../../models/device_info.dart';
+
+/// Retry configuration
+class RetryConfig {
+  final int maxRetries;
+  final Duration initialDelay;
+  final double backoffMultiplier;
+  final Duration maxDelay;
+
+  const RetryConfig({
+    this.maxRetries = 5,
+    this.initialDelay = const Duration(seconds: 1),
+    this.backoffMultiplier = 2.0,
+    this.maxDelay = const Duration(minutes: 5),
+  });
+
+  /// Calculate delay for a given attempt (0-indexed)
+  Duration getDelay(int attempt) {
+    final delay = initialDelay.inMilliseconds *
+        pow(backoffMultiplier, attempt);
+    return Duration(
+      milliseconds: min(delay.toInt(), maxDelay.inMilliseconds),
+    );
+  }
+}
 
 /// API configuration
 class ApiConfig {
   final String baseUrl;
   final String wsUrl;
   final Duration timeout;
+  final RetryConfig retryConfig;
 
   ApiConfig({
     required this.baseUrl,
     String? wsUrl,
     this.timeout = const Duration(seconds: 30),
+    this.retryConfig = const RetryConfig(),
   }) : wsUrl = wsUrl ?? baseUrl.replaceFirst('http', 'ws');
 }
 
@@ -135,34 +162,79 @@ class ApiService {
     }
   }
 
-  /// Send SOS alert directly to server
-  Future<ApiResponse<Map<String, dynamic>>> sendSosAlert(SOSAlert alert) async {
-    try {
-      final response = await http
-          .post(
-            Uri.parse('${config.baseUrl}/api/v1/sos/alert'),
-            headers: _headers,
-            body: jsonEncode(alert.toJson()),
-          )
-          .timeout(config.timeout);
+  /// Send SOS alert directly to server with retry logic
+  Future<ApiResponse<Map<String, dynamic>>> sendSosAlert(SOSAlert alert, {bool retry = true}) async {
+    return _sendWithRetry(
+      () => _sendSosAlertOnce(alert),
+      retry: retry,
+      onFinalFailure: () => _queueMessage('sos_alert', alert.toJson()),
+    );
+  }
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        return ApiResponse.success(json, statusCode: response.statusCode);
-      } else {
-        // Queue for later if server error
-        if (response.statusCode >= 500) {
-          _queueMessage('sos_alert', alert.toJson());
+  /// Single attempt to send SOS alert
+  Future<ApiResponse<Map<String, dynamic>>> _sendSosAlertOnce(SOSAlert alert) async {
+    final response = await http
+        .post(
+          Uri.parse('${config.baseUrl}/api/v1/sos/alert'),
+          headers: _headers,
+          body: jsonEncode(alert.toJson()),
+        )
+        .timeout(config.timeout);
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      return ApiResponse.success(json, statusCode: response.statusCode);
+    } else {
+      return ApiResponse.error(
+        'Failed to send SOS: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
+  /// Generic retry wrapper with exponential backoff
+  Future<ApiResponse<T>> _sendWithRetry<T>(
+    Future<ApiResponse<T>> Function() operation, {
+    bool retry = true,
+    void Function()? onFinalFailure,
+  }) async {
+    final retryConfig = config.retryConfig;
+    int attempt = 0;
+
+    while (true) {
+      try {
+        final response = await operation();
+
+        if (response.success) {
+          return response;
         }
-        return ApiResponse.error(
-          'Failed to send SOS: ${response.statusCode}',
-          statusCode: response.statusCode,
-        );
+
+        // Don't retry client errors (4xx)
+        if (response.statusCode >= 400 && response.statusCode < 500) {
+          return response;
+        }
+
+        // Check if we should retry
+        if (!retry || attempt >= retryConfig.maxRetries) {
+          onFinalFailure?.call();
+          return response;
+        }
+
+        // Wait before retrying
+        final delay = retryConfig.getDelay(attempt);
+        await Future.delayed(delay);
+        attempt++;
+      } catch (e) {
+        if (!retry || attempt >= retryConfig.maxRetries) {
+          onFinalFailure?.call();
+          return ApiResponse.error('Network error after $attempt retries: $e');
+        }
+
+        // Wait before retrying
+        final delay = retryConfig.getDelay(attempt);
+        await Future.delayed(delay);
+        attempt++;
       }
-    } catch (e) {
-      // Queue for later if network error
-      _queueMessage('sos_alert', alert.toJson());
-      return ApiResponse.error('Network error: $e');
     }
   }
 

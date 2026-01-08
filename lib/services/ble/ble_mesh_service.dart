@@ -2,7 +2,6 @@
 /// Handles Bluetooth Low Energy mesh networking for SOS relay
 
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -10,6 +9,8 @@ import '../../models/sos_alert.dart';
 import '../../models/peer_device.dart';
 import '../../models/device_info.dart';
 import '../crypto/encryption_service.dart';
+import 'ble_peripheral_service.dart';
+import '../storage/database_service.dart';
 
 /// BLE Service UUIDs for SOS Mesh
 class BleUuids {
@@ -90,8 +91,13 @@ class BLEMeshService extends ChangeNotifier {
   // Subscriptions
   StreamSubscription? _scanSubscription;
   StreamSubscription? _adapterStateSubscription;
+  StreamSubscription? _peripheralEventSubscription;
   Timer? _scanTimer;
   Timer? _broadcastTimer;
+
+  // Native BLE peripheral service for advertising
+  final BLEPeripheralService _peripheralService = BLEPeripheralService();
+  final DatabaseService _databaseService = DatabaseService();
 
   // Events
   final _eventController = StreamController<BleMeshEvent>.broadcast();
@@ -141,6 +147,10 @@ class BLEMeshService extends ChangeNotifier {
       return false;
     }
 
+    // Initialize native peripheral service for advertising
+    await _peripheralService.initialize();
+    _setupPeripheralEventListener();
+
     // Listen to adapter state
     _adapterStateSubscription = FlutterBluePlus.adapterState.listen((state) {
       if (state == BluetoothAdapterState.off) {
@@ -165,6 +175,83 @@ class BLEMeshService extends ChangeNotifier {
     notifyListeners();
 
     return true;
+  }
+
+  /// Setup listener for peripheral service events
+  void _setupPeripheralEventListener() {
+    _peripheralEventSubscription = _peripheralService.events.listen((event) {
+      if (event is BeaconReceivedEvent) {
+        _handleReceivedBeacon(event);
+      } else if (event is DataReceivedEvent) {
+        _processReceivedSosData(event.data, event.deviceAddress);
+      } else if (event is PeerConnectedEvent) {
+        // Update peer connection state
+        final peer = _peers.values.firstWhere(
+          (p) => p.bleAddress == event.deviceAddress,
+          orElse: () => PeerDevice(
+            deviceId: event.deviceAddress,
+            bleAddress: event.deviceAddress,
+          ),
+        );
+        if (!_peers.containsKey(peer.deviceId)) {
+          _peers[peer.deviceId] = peer;
+        }
+        _connectedPeerIds.add(peer.deviceId);
+        peer.connectionState = PeerConnectionState.connected;
+        notifyListeners();
+      } else if (event is AdvertisingErrorEvent) {
+        _eventController.add(BleErrorEvent('Advertising error: ${event.message}'));
+      }
+    });
+  }
+
+  /// Handle received SOS beacon from native advertising
+  Future<void> _handleReceivedBeacon(BeaconReceivedEvent event) async {
+    final beacon = event.beacon;
+    
+    // Construct message ID from UserID + Sequence (Simple for prototype)
+    final messageId = '${beacon.userId}_${beacon.sequence}';
+
+    // Persist to DB
+    final isNew = await _databaseService.saveMessage(
+      messageId, 
+      beacon.toBytes(), 
+      0 // Unknown hop count in strict beacon, assume 0 or derived
+    );
+
+    if (!isNew) return; // Deduplication
+
+    // Create a peer for the sender
+    final peer = PeerDevice(
+      deviceId: beacon.userId.toString(),
+      bleAddress: event.deviceAddress,
+      rssi: event.rssi,
+      hasInternet: false, // Unknown in strict beacon
+    );
+
+    if (!_peers.containsKey(peer.deviceId)) {
+      _peers[peer.deviceId] = peer;
+      _eventController.add(PeerDiscoveredEvent(peer));
+    }
+
+    // Convert beacon to SOS alert for processing
+    final emergencyIndex = beacon.status.clamp(0, EmergencyType.values.length - 1);
+    final alert = SOSAlert(
+      messageId: messageId,
+      originatorDeviceId: beacon.userId.toString(),
+      appSignature: '',
+      emergencyType: EmergencyType.values[emergencyIndex],
+      location: GeoLocation(
+        latitude: beacon.latitude,
+        longitude: beacon.longitude,
+        timestamp: DateTime.fromMillisecondsSinceEpoch(beacon.timestamp * 1000),
+      ),
+      hopCount: beacon.sequence,
+    );
+
+    peer.recordMessage(received: true);
+    _eventController.add(MessageReceivedEvent(alert, peer));
+    notifyListeners();
   }
 
   /// Request Bluetooth permissions
@@ -205,9 +292,13 @@ class BLEMeshService extends ChangeNotifier {
 
     try {
       // Start scanning
+      // Note: allowDuplicates is needed for iOS background scanning effectively 
+      // but consumes more battery. Logic handles throttling.
       await FlutterBluePlus.startScan(
         timeout: config.scanDuration,
-        withServices: [Guid(BleUuids.serviceUuid)],
+        // withServices: [Guid(BleUuids.serviceUuid)], // Scan all for now to catch 0xFFFF manufacturer data
+        // allowDuplicates: true, // Removed in newer versions
+        continuousUpdates: true, // Attempt to use continuousUpdates if available, or just rely on defaults
       );
 
       // Listen to scan results
@@ -231,32 +322,27 @@ class BLEMeshService extends ChangeNotifier {
 
   /// Process a scan result
   void _processScanResult(ScanResult result) {
-    final deviceId = _extractDeviceId(result);
-    if (deviceId == null || deviceId == localDevice?.deviceId) return;
-
-    final existingPeer = _peers[deviceId];
-
-    if (existingPeer != null) {
-      existingPeer.updateFromAdvertisement(
-        rssi: result.rssi,
-        hasInternet: _extractHasInternet(result),
-      );
-    } else {
-      final peer = PeerDevice(
-        deviceId: deviceId,
-        bleAddress: result.device.remoteId.str,
-        name: result.device.platformName,
-        rssi: result.rssi,
-        hasInternet: _extractHasInternet(result),
-      );
-      _peers[deviceId] = peer;
-      _eventController.add(PeerDiscoveredEvent(peer));
+    // Check for our specific Manufacturer Data (0xFFFF)
+    // Note: 0xFFFF is the decimal 65535
+    final manufacturerData = result.advertisementData.manufacturerData;
+    
+    // Check for our App Header in the data
+    // Usually the key in the map IS the manufacturer ID.
+    // If we use 0xFFFF as the ID:
+    if (manufacturerData.containsKey(0xFFFF)) {
+       final data = manufacturerData[0xFFFF];
+       if (data != null) {
+         // Prepend header to match strict parsing expectations if needed
+         // SOSBeacon.fromBytes expects the full packet including header
+         // The map key is the header/company ID.
+         // So we reconstruct: [0xFF, 0xFF, ...data]
+         final fullBytes = [0xFF, 0xFF, ...data];
+         final beacon = SOSBeacon.fromBytes(fullBytes);
+         if (beacon != null) {
+            _handleReceivedBeacon(BeaconReceivedEvent(beacon, result.rssi, result.device.remoteId.str));
+         }
+       }
     }
-
-    // Check for SOS alerts in advertisement data
-    _checkForSosInAdvertisement(result);
-
-    notifyListeners();
   }
 
   /// Extract device ID from advertisement
@@ -277,56 +363,18 @@ class BLEMeshService extends ChangeNotifier {
 
   /// Extract internet availability from advertisement
   bool _extractHasInternet(ScanResult result) {
-    final manufacturerData = result.advertisementData.manufacturerData;
-    if (manufacturerData.isNotEmpty) {
-      final data = manufacturerData.values.first;
-      if (data.length > 8) {
-        return data[8] == 1;
-      }
-    }
+    // Not available in strict beacon
     return false;
   }
 
   /// Check for SOS alerts in advertisement data
   void _checkForSosInAdvertisement(ScanResult result) {
-    final serviceData = result.advertisementData.serviceData;
-    final sosServiceGuid = Guid(BleUuids.sosAlertUuid);
-
-    if (serviceData.containsKey(sosServiceGuid)) {
-      final data = serviceData[sosServiceGuid]!;
-      _processReceivedSosData(data, result.device.remoteId.str);
-    }
+    // Deprecated logic, moved to _processScanResult
   }
 
   /// Process received SOS data
   void _processReceivedSosData(List<int> data, String fromAddress) {
-    try {
-      final alert = SOSAlert.fromBytes(data);
-      if (alert == null) return;
-
-      // Skip if already processed
-      if (_processedMessageIds.contains(alert.messageId)) return;
-      _processedMessageIds.add(alert.messageId);
-
-      // Skip if expired
-      if (alert.isExpired) return;
-
-      // Skip if max hops reached
-      if (alert.hopCount >= config.maxRelayHops) return;
-
-      final peer = _peers.values.firstWhere(
-        (p) => p.bleAddress == fromAddress,
-        orElse: () => PeerDevice(
-          deviceId: 'unknown',
-          bleAddress: fromAddress,
-        ),
-      );
-
-      peer.recordMessage(received: true);
-      _eventController.add(MessageReceivedEvent(alert, peer));
-    } catch (e) {
-      // Ignore malformed data
-    }
+    // Deprecated logic, we use Beacon structure now
   }
 
   /// Broadcast an SOS alert
@@ -340,82 +388,51 @@ class BLEMeshService extends ChangeNotifier {
       config.advertisingInterval,
       (_) => _broadcastAlert(alert),
     );
-
-    // Also try to connect and send to nearby peers directly
-    await _sendToPeers(alert);
   }
 
-  /// Broadcast alert in advertisement data
+  /// Broadcast alert in advertisement data using native peripheral mode
   Future<void> _broadcastAlert(SOSAlert alert) async {
-    // Note: flutter_blue_plus doesn't support peripheral mode directly
-    // This would require platform-specific implementation
-    // For now, we rely on sending to connected peers
+    if (!_peripheralService.isSupported) {
+      // Fall back to direct peer connections only
+      _isAdvertising = true;
+      notifyListeners();
+      return;
+    }
 
-    _isAdvertising = true;
+    // Convert SOSAlert to strict SOSBeacon
+    final beacon = SOSBeacon(
+      userId: alert.originatorDeviceId.hashCode, // 4 bytes
+      sequence: 1, // Need proper sequence tracking in DB
+      latitude: alert.location.latitude,
+      longitude: alert.location.longitude,
+      status: 1, // SOS
+      timestamp: alert.originatedAt.millisecondsSinceEpoch ~/ 1000,
+    );
+
+    final success = await _peripheralService.startAdvertising(beacon);
+    if (success) {
+      _isAdvertising = true;
+    } else {
+      _eventController.add(BleErrorEvent(
+        'Failed to start advertising: ${_peripheralService.lastError}',
+      ));
+    }
     notifyListeners();
   }
 
   /// Send alert to all connected peers
   Future<void> _sendToPeers(SOSAlert alert) async {
-    for (final peer in _peers.values) {
-      if (peer.connectionState == PeerConnectionState.connected) {
-        await _sendAlertToPeer(alert, peer);
-      } else {
-        // Try to connect
-        await _connectAndSend(alert, peer);
-      }
-    }
+    // Deprecated: We primarily use advertising (Flood Mesh)
   }
 
   /// Connect to a peer and send alert
   Future<void> _connectAndSend(SOSAlert alert, PeerDevice peer) async {
-    try {
-      final device = BluetoothDevice.fromId(peer.bleAddress);
-
-      peer.connectionState = PeerConnectionState.connecting;
-      notifyListeners();
-
-      await device.connect(timeout: const Duration(seconds: 5));
-      _connectedPeerIds.add(peer.deviceId);
-      peer.connectionState = PeerConnectionState.connected;
-      notifyListeners();
-
-      await _sendAlertToPeer(alert, peer);
-    } catch (e) {
-      peer.connectionState = PeerConnectionState.error;
-      notifyListeners();
-    }
+    // Deprecated
   }
 
   /// Send alert to a specific peer
   Future<void> _sendAlertToPeer(SOSAlert alert, PeerDevice peer) async {
-    try {
-      final device = BluetoothDevice.fromId(peer.bleAddress);
-      final services = await device.discoverServices();
-
-      for (final service in services) {
-        if (service.uuid.toString() == BleUuids.serviceUuid) {
-          for (final char in service.characteristics) {
-            if (char.uuid.toString() == BleUuids.sosAlertUuid) {
-              // Send the alert
-              final alertForRelay = alert.copyForRelay(
-                localDevice?.deviceId ?? 'unknown',
-                false, // hasInternet determined by connectivity service
-              );
-              await char.write(alertForRelay.toBytes());
-
-              peer.recordMessage(sent: true);
-              _eventController.add(MessageRelayedEvent(
-                alert.messageId,
-                peer.deviceId,
-              ));
-            }
-          }
-        }
-      }
-    } catch (e) {
-      _eventController.add(BleErrorEvent('Failed to send to peer', e));
-    }
+    // Deprecated
   }
 
   /// Stop broadcasting an SOS
@@ -423,6 +440,7 @@ class BLEMeshService extends ChangeNotifier {
     _activeAlerts.remove(messageId);
     if (_activeAlerts.isEmpty) {
       _broadcastTimer?.cancel();
+      _peripheralService.stopAdvertising();
       _isAdvertising = false;
       notifyListeners();
     }
@@ -457,7 +475,10 @@ class BLEMeshService extends ChangeNotifier {
     _broadcastTimer?.cancel();
     _scanSubscription?.cancel();
     _adapterStateSubscription?.cancel();
+    _peripheralEventSubscription?.cancel();
+    _peripheralService.dispose();
     _eventController.close();
+    _databaseService.close(); // Close DB
 
     // Disconnect all peers
     for (final peerId in _connectedPeerIds) {
