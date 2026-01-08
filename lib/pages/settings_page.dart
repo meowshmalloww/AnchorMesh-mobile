@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/packet_store.dart';
+import '../services/offline_map_service.dart';
 
 /// Battery saving modes for mesh operation
 enum BatteryMode {
@@ -249,7 +251,7 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (context) => AlertDialog(
         title: const Text('Clear Data?'),
         content: const Text(
-          'This will remove all cached SOS packets. Your device ID will remain.',
+          'This will remove all cached SOS packets and offline map data. Your device ID will remain.',
         ),
         actions: [
           TextButton(
@@ -257,7 +259,13 @@ class _SettingsPageState extends State<SettingsPage> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
+              // Clear packet store
+              await PacketStore.instance.clearAllData();
+              // Clear map cache
+              await OfflineMapService.instance.clearCache();
+
+              if (!mounted) return;
               Navigator.pop(context);
               ScaffoldMessenger.of(
                 context,

@@ -224,6 +224,16 @@ class PacketStore {
     return deletedPackets;
   }
 
+  /// Clear all local data (packets, seen entries, queue)
+  Future<void> clearAllData() async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('packets');
+      await txn.delete('seen_packets');
+      await txn.delete('broadcast_queue');
+    });
+  }
+
   // ==================
   // Broadcast Queue
   // ==================
