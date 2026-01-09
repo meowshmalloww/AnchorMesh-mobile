@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../services/liquid_glass_service.dart';
+import '../services/version_detector.dart';
 
 /// A widget that applies platform-native theming effects.
 ///
@@ -537,4 +538,285 @@ extension NativeThemeExtension on BuildContext {
   /// Check if Material You is supported
   bool get isMaterialYouSupported =>
       LiquidGlassService.instance.isMaterialYouSupported;
+}
+
+/// Adaptive Liquid Glass widget with explicit version detection and legacy fallbacks.
+///
+/// This widget automatically detects the OS version and:
+/// - iOS 26+: Uses native Liquid Glass effects via platform channel
+/// - iOS 15-25: Uses BackdropFilter with iOS-style blur
+/// - Android 12+: Uses Material You-inspired blur effects
+/// - Legacy: Falls back to simple semi-transparent containers
+///
+/// Usage:
+/// ```dart
+/// AdaptiveLiquidGlass(
+///   child: Text('Hello'),
+///   intensity: 0.8,
+/// )
+/// ```
+class AdaptiveLiquidGlass extends StatefulWidget {
+  /// The child widget to display
+  final Widget child;
+
+  /// Intensity of the glass effect (0.0 - 1.0)
+  final double intensity;
+
+  /// Optional tint color for the glass effect
+  final Color? tintColor;
+
+  /// Border radius for the container
+  final BorderRadius? borderRadius;
+
+  /// Padding inside the container
+  final EdgeInsets? padding;
+
+  /// Margin around the container
+  final EdgeInsets? margin;
+
+  /// Unique identifier for native effect tracking
+  final String? elementId;
+
+  /// Callback when native effect is applied or fallback is used
+  final void Function(bool isNative)? onEffectApplied;
+
+  const AdaptiveLiquidGlass({
+    super.key,
+    required this.child,
+    this.intensity = 0.8,
+    this.tintColor,
+    this.borderRadius,
+    this.padding,
+    this.margin,
+    this.elementId,
+    this.onEffectApplied,
+  });
+
+  @override
+  State<AdaptiveLiquidGlass> createState() => _AdaptiveLiquidGlassState();
+}
+
+class _AdaptiveLiquidGlassState extends State<AdaptiveLiquidGlass> {
+  bool _isLoading = true;
+  bool _supportsNative = false;
+  bool _supportsBlur = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkSupport();
+  }
+
+  Future<void> _checkSupport() async {
+    final detector = VersionDetector.instance;
+    await detector.initialize();
+
+    final supportsNative = await detector.supportsNativeTheming();
+    final supportsBlur = await detector.supportsBlurEffects();
+
+    if (mounted) {
+      setState(() {
+        _supportsNative = supportsNative;
+        _supportsBlur = supportsBlur;
+        _isLoading = false;
+      });
+
+      // Apply native effect if supported
+      if (_supportsNative && Platform.isIOS && widget.elementId != null) {
+        await LiquidGlassService.instance.applyLiquidGlass(
+          widget.elementId!,
+          intensity: widget.intensity,
+          tintColor: widget.tintColor?.value,
+        );
+      }
+
+      widget.onEffectApplied?.call(_supportsNative);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final borderRadius = widget.borderRadius ?? BorderRadius.circular(16);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Show loading placeholder while checking version
+    if (_isLoading) {
+      return _buildPlaceholder(borderRadius, isDark);
+    }
+
+    // iOS 26+ with native Liquid Glass
+    if (_supportsNative && Platform.isIOS) {
+      return _buildNativeLiquidGlass(borderRadius, isDark);
+    }
+
+    // iOS 15-25 or Android 10+ with blur fallback
+    if (_supportsBlur) {
+      return _buildBlurFallback(borderRadius, isDark);
+    }
+
+    // Legacy devices: simple semi-transparent container
+    return _buildLegacyFallback(borderRadius, isDark);
+  }
+
+  Widget _buildPlaceholder(BorderRadius borderRadius, bool isDark) {
+    return Container(
+      margin: widget.margin,
+      padding: widget.padding,
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        color: isDark
+            ? Colors.black.withOpacity(0.3)
+            : Colors.white.withOpacity(0.5),
+      ),
+      child: widget.child,
+    );
+  }
+
+  Widget _buildNativeLiquidGlass(BorderRadius borderRadius, bool isDark) {
+    // For iOS 26+, we apply native effects but still render a container
+    // The native effect is applied via platform channel in _checkSupport()
+    return Container(
+      margin: widget.margin,
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: 20.0 * widget.intensity,
+            sigmaY: 20.0 * widget.intensity,
+          ),
+          child: Container(
+            padding: widget.padding,
+            decoration: BoxDecoration(
+              borderRadius: borderRadius,
+              // iOS Liquid Glass style - very translucent with high saturation
+              color: widget.tintColor?.withOpacity(widget.intensity * 0.2) ??
+                  (isDark
+                      ? Colors.black.withOpacity(widget.intensity * 0.15)
+                      : Colors.white.withOpacity(widget.intensity * 0.25)),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withOpacity(0.2)
+                    : Colors.white.withOpacity(0.4),
+                width: 0.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: widget.child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBlurFallback(BorderRadius borderRadius, bool isDark) {
+    final blurAmount = Platform.isIOS
+        ? 15.0 * widget.intensity  // iOS style blur
+        : 10.0 * widget.intensity; // Android style blur
+
+    return Container(
+      margin: widget.margin,
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: blurAmount,
+            sigmaY: blurAmount,
+          ),
+          child: Container(
+            padding: widget.padding,
+            decoration: BoxDecoration(
+              borderRadius: borderRadius,
+              color: widget.tintColor?.withOpacity(widget.intensity * 0.3) ??
+                  (isDark
+                      ? Colors.black.withOpacity(widget.intensity * 0.4)
+                      : Colors.white.withOpacity(widget.intensity * 0.6)),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withOpacity(0.15)
+                    : Colors.black.withOpacity(0.08),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: widget.child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLegacyFallback(BorderRadius borderRadius, bool isDark) {
+    // No blur support - use solid semi-transparent background
+    return Container(
+      margin: widget.margin,
+      padding: widget.padding,
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        color: widget.tintColor?.withOpacity(widget.intensity * 0.5) ??
+            (isDark
+                ? Colors.grey[900]!.withOpacity(widget.intensity * 0.9)
+                : Colors.grey[100]!.withOpacity(widget.intensity * 0.9)),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withOpacity(0.1)
+              : Colors.black.withOpacity(0.1),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 5,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: widget.child,
+    );
+  }
+}
+
+/// A container that uses the best available glass effect for the current platform.
+///
+/// This is a convenience wrapper around [AdaptiveLiquidGlass] with common defaults.
+class PlatformGlassContainer extends StatelessWidget {
+  final Widget child;
+  final double intensity;
+  final Color? backgroundColor;
+  final EdgeInsets? padding;
+  final EdgeInsets? margin;
+  final BorderRadius? borderRadius;
+
+  const PlatformGlassContainer({
+    super.key,
+    required this.child,
+    this.intensity = 0.8,
+    this.backgroundColor,
+    this.padding = const EdgeInsets.all(16),
+    this.margin,
+    this.borderRadius,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AdaptiveLiquidGlass(
+      intensity: intensity,
+      tintColor: backgroundColor,
+      padding: padding,
+      margin: margin,
+      borderRadius: borderRadius ?? BorderRadius.circular(20),
+      child: child,
+    );
+  }
 }

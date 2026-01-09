@@ -8,6 +8,7 @@ import '../models/sos_status.dart';
 import '../services/ble_service.dart';
 import '../services/connectivity_service.dart';
 import '../utils/rssi_calculator.dart';
+import '../widgets/adaptive/adaptive_widgets.dart';
 
 class SOSPage extends StatefulWidget {
   const SOSPage({super.key});
@@ -116,9 +117,7 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
 
     _errorSubscription = _bleService.onError.listen((error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error), backgroundColor: Colors.orange),
-        );
+        showWarningSnackBar(context, error);
       }
     });
 
@@ -139,13 +138,7 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
           _echoSources = _bleService.echoSources;
         });
         // Show feedback
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('📡 Signal relayed! $_echoCount copies out there'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
-        );
+        showSuccessSnackBar(context, 'Signal relayed! $_echoCount copies out there');
       }
     });
 
@@ -183,15 +176,14 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
       packet.userId.toRadixString(16),
     );
     final distanceText = distance != null
-        ? ' • ${RSSICalculator.getProximityDescription(distance)}'
+        ? ' - ${RSSICalculator.getProximityDescription(distance)}'
         : '';
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${packet.status.label} received$distanceText'),
-        backgroundColor: Color(packet.status.colorValue),
-        duration: const Duration(seconds: 3),
-      ),
+    showAdaptiveSnackBar(
+      context: context,
+      message: '${packet.status.label} received$distanceText',
+      icon: packet.status.icon,
+      backgroundColor: Color(packet.status.colorValue),
     );
   }
 
@@ -301,9 +293,7 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
 
       if (_latitude == null || _longitude == null) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Location required')));
+        showWarningSnackBar(context, 'Location required');
         return;
       }
 
@@ -369,64 +359,24 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
           children: [
             // Low power warning
             if (_isLowPowerMode)
-              Container(
-                padding: const EdgeInsets.all(12),
+              AdaptiveInfoCard(
+                icon: Icons.battery_alert,
+                color: Colors.orange,
+                title: 'Low Power Mode ON',
+                subtitle: 'Disable for reliable mesh.',
+                isBordered: true,
                 margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withAlpha(40),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.battery_alert, color: Colors.orange, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Low Power Mode ON. Disable for reliable mesh.',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
               ),
 
             // WiFi Warning
             if (_isWifiEnabled)
-              Container(
-                padding: const EdgeInsets.all(12),
+              AdaptiveInfoCard(
+                icon: Icons.wifi_off,
+                color: Colors.blue,
+                title: 'Starlink/WiFi is ON',
+                subtitle: 'Turn off for better mesh range if not needed.',
+                isBordered: true,
                 margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withAlpha(40),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.wifi_off, color: Colors.blue, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: RichText(
-                        text: TextSpan(
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isDark ? Colors.white : Colors.black,
-                          ),
-                          children: [
-                            const TextSpan(
-                              text: 'Starlink/WiFi is ON.',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const TextSpan(
-                              text:
-                                  ' Turn off for better mesh range if not needed.',
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
               ),
 
             // Status selection
@@ -611,43 +561,11 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
 
             // Help text
             const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.withAlpha(20),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.info_outline,
-                        color: Colors.blue,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        "Mesh SOS",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    "• No internet? Your signal relays via nearby phones\n• Keep app open for best results\n• Safe? Tap STOP to cancel",
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.4,
-                      color: subColor,
-                    ),
-                  ),
-                ],
-              ),
+            AdaptiveInfoCard(
+              icon: Icons.info_outline,
+              color: Colors.blue,
+              title: 'Mesh SOS',
+              subtitle: 'No internet? Your signal relays via nearby phones. Keep app open for best results.',
             ),
 
             const SizedBox(height: 30),

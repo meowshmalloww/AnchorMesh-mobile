@@ -7,6 +7,7 @@ import '../services/packet_store.dart';
 import '../services/offline_map_service.dart';
 import '../services/ble_service.dart';
 import '../services/connectivity_service.dart';
+import '../widgets/adaptive/adaptive_widgets.dart';
 
 /// Battery saving modes for mesh operation
 enum BatteryMode {
@@ -220,7 +221,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
 
           // Status Section
-          _buildSectionCard(
+          AdaptiveSectionCard(
             title: 'Status',
             icon: Icons.dashboard,
             iconColor: Colors.blue,
@@ -229,21 +230,21 @@ class _SettingsPageState extends State<SettingsPage> {
                 padding: const EdgeInsets.all(12),
                 child: Column(
                   children: [
-                    _buildStatusRow(
+                    AdaptiveStatusRow(
                       icon: Icons.bluetooth,
                       title: 'Mesh Status',
                       value: _getBleStatusText(),
                       color: _getBleStatusColor(),
                     ),
                     const SizedBox(height: 12),
-                    _buildStatusRow(
+                    AdaptiveStatusRow(
                       icon: Icons.sensors,
                       title: 'Active SOS Signals',
                       value: _activeSosCount.toString(),
                       color: _activeSosCount > 0 ? Colors.red : Colors.grey,
                     ),
                     const SizedBox(height: 12),
-                    _buildStatusRow(
+                    AdaptiveStatusRow(
                       icon: Icons.cloud,
                       title: 'Internet',
                       value: _isOnline ? 'Connected' : 'Offline',
@@ -258,7 +259,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
 
           // Global Alerts Section
-          _buildSectionCard(
+          AdaptiveSectionCard(
             title: 'Global Alerts',
             icon: Icons.warning_amber,
             iconColor: Colors.orange,
@@ -273,7 +274,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
 
           // Battery Mode Section
-          _buildSectionCard(
+          AdaptiveSectionCard(
             title: 'Battery Mode',
             icon: Icons.battery_charging_full,
             iconColor: Colors.green,
@@ -289,7 +290,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
 
           // BLE Version Section
-          _buildSectionCard(
+          AdaptiveSectionCard(
             title: 'Bluetooth',
             icon: Icons.bluetooth,
             iconColor: Colors.blue,
@@ -312,12 +313,12 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
 
           // Automation Section
-          _buildSectionCard(
+          AdaptiveSectionCard(
             title: 'Automation',
             icon: Icons.auto_mode,
             iconColor: Colors.orange,
             children: [
-              _buildSwitchTile(
+              AdaptiveSwitchTile(
                 icon: Icons.warning_amber,
                 title: 'Auto-activate on disaster',
                 subtitle: 'Start mesh when earthquake detected',
@@ -327,7 +328,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   _saveSetting('autoActivate', value);
                 },
               ),
-              _buildSwitchTile(
+              AdaptiveSwitchTile(
                 icon: Icons.cloud_upload,
                 title: 'Auto-upload when online',
                 subtitle: 'Sync SOS data when internet returns',
@@ -337,7 +338,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   _saveSetting('autoUpload', value);
                 },
               ),
-              _buildSwitchTile(
+              AdaptiveSwitchTile(
                 icon: Icons.notifications,
                 title: 'Show notifications',
                 subtitle: 'Alert when SOS signals received',
@@ -353,7 +354,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
 
           // Device Info Section
-          _buildSectionCard(
+          AdaptiveSectionCard(
             title: 'Device',
             icon: Icons.phone_android,
             iconColor: Colors.purple,
@@ -380,9 +381,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   icon: const Icon(Icons.copy, size: 20),
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: _userId));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Device ID copied')),
-                    );
+                    showSuccessSnackBar(context, 'Device ID copied');
                   },
                 ),
               ),
@@ -409,7 +408,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
 
           // Packet Info Section
-          _buildSectionCard(
+          AdaptiveSectionCard(
             title: 'SOS Packet Info',
             icon: Icons.info,
             iconColor: Colors.teal,
@@ -440,7 +439,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 12),
 
           // About Section
-          _buildSectionCard(
+          AdaptiveSectionCard(
             title: 'About',
             icon: Icons.info_outline,
             iconColor: Colors.grey,
@@ -492,55 +491,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 Text(
                   _alertLevel.description,
                   style: TextStyle(fontSize: 12, color: color),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusRow({
-    required IconData icon,
-    required String title,
-    required String value,
-    required Color color,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[850] : Colors.grey[50],
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: color.withAlpha(30),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                ),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
                 ),
               ],
             ),
@@ -780,70 +730,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildSectionCard({
-    required String title,
-    required IconData icon,
-    required Color iconColor,
-    required List<Widget> children,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark ? Colors.black26 : Colors.grey.withAlpha(30),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Icon(icon, color: iconColor, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  title.toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey[600],
-                    letterSpacing: 1,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          ...children,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSwitchTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return SwitchListTile(
-      secondary: Icon(icon, size: 20),
-      title: Text(title, style: const TextStyle(fontSize: 14)),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-      value: value,
-      onChanged: onChanged,
-    );
-  }
-
   Widget _buildBatteryModeOption(BatteryMode mode) {
     final isSelected = _batteryMode == mode;
     final color = mode == BatteryMode.sosActive
@@ -981,82 +867,72 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  void _showClearDataDialog() {
-    showDialog(
+  void _showClearDataDialog() async {
+    final confirmed = await showAdaptiveAlertDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear Data?'),
-        content: const Text(
-          'This will remove all cached SOS packets and offline map data. Your device ID will remain.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              final navigator = Navigator.of(context);
-              final messenger = ScaffoldMessenger.of(context);
-
-              await PacketStore.instance.clearAllData();
-              await OfflineMapService.instance.clearCache();
-
-              if (!mounted) return;
-              navigator.pop();
-              messenger.showSnackBar(
-                const SnackBar(content: Text('Data cleared successfully')),
-              );
-            },
-            child: const Text('Clear', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+      title: 'Clear Data?',
+      content: 'This will remove all cached SOS packets and offline map data. Your device ID will remain.',
+      confirmText: 'Clear',
+      cancelText: 'Cancel',
+      isDestructive: true,
     );
+
+    if (confirmed == true && mounted) {
+      await PacketStore.instance.clearAllData();
+      await OfflineMapService.instance.clearCache();
+      if (mounted) {
+        showSuccessSnackBar(context, 'Data cleared successfully');
+      }
+    }
   }
 
   void _showHowItWorksDialog(BuildContext context) {
-    showDialog(
+    showGlassDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('How Mesh SOS Works'),
-        content: const SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '1. You send an SOS',
-                style: TextStyle(fontWeight: FontWeight.bold),
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'How Mesh SOS Works',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '1. You send an SOS',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const Text('Your phone broadcasts via Bluetooth'),
+            const SizedBox(height: 12),
+            const Text(
+              '2. Phones relay your message',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const Text('Nearby phones pick up and rebroadcast'),
+            const SizedBox(height: 12),
+            const Text(
+              '3. Message reaches rescuers',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const Text('When any phone gets internet, your SOS uploads'),
+            const SizedBox(height: 12),
+            const Text(
+              '4. Even without internet',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const Text('Rescuers with the app can see your location directly'),
+            const SizedBox(height: 24),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Got it'),
               ),
-              Text('Your phone broadcasts via Bluetooth'),
-              SizedBox(height: 12),
-              Text(
-                '2. Phones relay your message',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              Text('Nearby phones pick up and rebroadcast'),
-              SizedBox(height: 12),
-              Text(
-                '3. Message reaches rescuers',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              Text('When any phone gets internet, your SOS uploads'),
-              SizedBox(height: 12),
-              Text(
-                '4. Even without internet',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              Text('Rescuers with the app can see your location directly'),
-            ],
-          ),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Got it'),
-          ),
-        ],
       ),
     );
   }

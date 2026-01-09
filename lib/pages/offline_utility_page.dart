@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_audio_capture/flutter_audio_capture.dart';
 import '../utils/morse_code_translator.dart';
 import '../utils/fft_analyzer.dart';
+import '../widgets/adaptive/adaptive_widgets.dart';
 import 'signal_locator_page.dart';
 
 class OfflineUtilityPage extends StatefulWidget {
@@ -123,9 +124,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     try {
       // Check if torch is available
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Flashlight not available")));
+      showWarningSnackBar(context, 'Flashlight not available');
       return;
     }
 
@@ -234,21 +233,12 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
       setState(() => _isUltrasonicPlaying = true);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Emitting ${(_frequency / 1000).toStringAsFixed(1)} kHz',
-            ),
-            backgroundColor: Colors.purple,
-          ),
-        );
+        showInfoSnackBar(context, 'Emitting ${(_frequency / 1000).toStringAsFixed(1)} kHz');
       }
     } catch (e) {
       debugPrint("Ultrasonic error: $e");
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        showErrorSnackBar(context, 'Error: $e');
       }
     }
   }
@@ -320,12 +310,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
       final granted = await _requestMicrophonePermission();
       if (!granted) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Microphone permission required for detector'),
-              backgroundColor: Colors.red,
-            ),
-          );
+          showErrorSnackBar(context, 'Microphone permission required for detector');
         }
         return;
       }
@@ -392,22 +377,12 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Listening for ultrasonic signals...'),
-            backgroundColor: Colors.teal,
-          ),
-        );
+        showInfoSnackBar(context, 'Listening for ultrasonic signals...');
       }
     } catch (e) {
       debugPrint('Failed to start audio capture: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to start detector: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showErrorSnackBar(context, 'Failed to start detector: $e');
         setState(() => _isDetecting = false);
       }
     }

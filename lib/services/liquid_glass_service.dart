@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'version_detector.dart';
 
 /// Native theme integration service for iOS 26 Liquid Glass and Android Material You.
 ///
@@ -65,6 +66,9 @@ class LiquidGlassService {
     if (_isInitialized) return;
 
     try {
+      // Initialize version detector first
+      await VersionDetector.instance.initialize();
+
       // Listen for native theme events
       _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
         _handleNativeEvent,
@@ -73,7 +77,7 @@ class LiquidGlassService {
         },
       );
 
-      // Check platform capabilities
+      // Check platform capabilities via method channel
       final capabilities = await _channel.invokeMethod<Map>('getCapabilities');
       if (capabilities != null) {
         _isLiquidGlassSupported = capabilities['liquidGlassSupported'] as bool? ?? false;
@@ -81,10 +85,22 @@ class LiquidGlassService {
         _systemAccentColor = capabilities['systemAccentColor'] as int?;
       }
 
+      // Cross-validate with version detector for accuracy
+      if (Platform.isIOS) {
+        final supportsLG = await VersionDetector.instance.supportsLiquidGlass();
+        // Only enable if both native and version detector agree
+        _isLiquidGlassSupported = _isLiquidGlassSupported && supportsLG;
+      } else if (Platform.isAndroid) {
+        final supportsMY = await VersionDetector.instance.supportsMaterialYou();
+        _isMaterialYouSupported = _isMaterialYouSupported || supportsMY;
+      }
+
       _isInitialized = true;
       debugPrint('LiquidGlassService initialized: '
           'LiquidGlass=$_isLiquidGlassSupported, '
-          'MaterialYou=$_isMaterialYouSupported');
+          'MaterialYou=$_isMaterialYouSupported, '
+          'iOS=${VersionDetector.instance.iosMajorVersion}, '
+          'AndroidSDK=${VersionDetector.instance.androidSdkVersion}');
     } on PlatformException catch (e) {
       debugPrint('LiquidGlassService: Failed to initialize: ${e.message}');
       _isInitialized = true; // Mark as initialized even on failure

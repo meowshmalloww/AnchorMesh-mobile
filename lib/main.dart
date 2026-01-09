@@ -3,14 +3,25 @@ import 'home_screen.dart';
 import 'theme_notifier.dart';
 import 'services/platform_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/version_detector.dart';
+import 'theme/adaptive_theme.dart';
+import 'widgets/native_theme_widget.dart';
+import 'widgets/adaptive/adaptive_dialogs.dart';
 
-void main() {
+/// Cached adaptive theme extension for performance
+AdaptiveThemeExtension? _cachedAdaptiveTheme;
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Handle Flutter errors gracefully
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
   };
+
+  // Initialize version detector and adaptive theme early
+  await VersionDetector.instance.initialize();
+  _cachedAdaptiveTheme = await AdaptiveThemeExtension.detect();
 
   // Initialize platform service
   PlatformService.instance;
@@ -77,27 +88,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final context = navigatorKey.currentContext;
     if (context == null) return;
 
-    showDialog(
+    showAdaptiveAlertDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.battery_alert, color: Colors.orange),
-            SizedBox(width: 10),
-            Text('Low Power Mode'),
-          ],
-        ),
-        content: const Text(
-          'Low Power Mode is enabled. This may prevent the mesh from working reliably.\n\n'
+      title: 'Low Power Mode',
+      content: 'Low Power Mode is enabled. This may prevent the mesh from working reliably.\n\n'
           'Please disable Low Power Mode in Settings > Battery for best results.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('I Understand'),
-          ),
-        ],
-      ),
+      confirmText: 'I Understand',
     );
   }
 
@@ -105,59 +101,86 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final context = navigatorKey.currentContext;
     if (context == null) return;
 
-    showDialog(
+    showAdaptiveAlertDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.warning, color: Colors.red),
-            SizedBox(width: 10),
-            Text('No Internet'),
-          ],
-        ),
-        content: const Text(
-          'Internet connection lost for an extended period.\n\n'
+      title: 'No Internet',
+      content: 'Internet connection lost for an extended period.\n\n'
           'Mesh mode can be activated to communicate with nearby devices.\n\n'
           'Go to the SOS tab to send a distress signal.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+      confirmText: 'OK',
+      isDestructive: true,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: ThemeNotifier(),
-      builder: (context, themeMode, child) {
-        return MaterialApp(
-          navigatorKey: navigatorKey,
-          title: 'Mesh SOS',
-          debugShowCheckedModeBanner: false,
-          themeMode: themeMode,
-          theme: ThemeData(
+    return NativeThemeProvider(
+      child: ValueListenableBuilder<ThemeMode>(
+        valueListenable: ThemeNotifier(),
+        builder: (context, themeMode, child) {
+          return MaterialApp(
+            navigatorKey: navigatorKey,
+            title: 'Mesh SOS',
+            debugShowCheckedModeBanner: false,
+            themeMode: themeMode,
+            theme: _buildLightTheme(),
+            darkTheme: _buildDarkTheme(),
+            home: const HomeScreen(),
+          );
+        },
+      ),
+    );
+  }
+
+  ThemeData _buildLightTheme() {
+    final colorScheme = _cachedAdaptiveTheme?.accentColor != null
+        ? ColorScheme.fromSeed(
+            seedColor: _cachedAdaptiveTheme!.accentColor!,
             brightness: Brightness.light,
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-            scaffoldBackgroundColor: Colors.white,
-            useMaterial3: true,
-          ),
-          darkTheme: ThemeData(
+          )
+        : ColorScheme.fromSeed(seedColor: Colors.deepPurple);
+
+    return ThemeData(
+      brightness: Brightness.light,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: Colors.white,
+      useMaterial3: true,
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
+      extensions: [
+        _cachedAdaptiveTheme ?? const AdaptiveThemeExtension(),
+      ],
+    );
+  }
+
+  ThemeData _buildDarkTheme() {
+    final colorScheme = _cachedAdaptiveTheme?.accentColor != null
+        ? ColorScheme.fromSeed(
+            seedColor: _cachedAdaptiveTheme!.accentColor!,
             brightness: Brightness.dark,
-            scaffoldBackgroundColor: Colors.black,
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
-            ),
-            useMaterial3: true,
-          ),
-          home: const HomeScreen(),
-        );
-      },
+          )
+        : ColorScheme.fromSeed(
+            seedColor: Colors.deepPurple,
+            brightness: Brightness.dark,
+          );
+
+    return ThemeData(
+      brightness: Brightness.dark,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: Colors.black,
+      useMaterial3: true,
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
+      extensions: [
+        _cachedAdaptiveTheme ?? const AdaptiveThemeExtension(),
+      ],
     );
   }
 }
