@@ -14,7 +14,7 @@ class ApiConfig {
 
   /// IMPORTANT: Set to false to use free OSM tiles
   /// Each map view = 15-30 tile requests! Set to true only for demos
-  static const bool useMapTiler = false;
+  static const bool useMapTiler = false; // TEMPORARILY DISABLED BY AGENT
 
   /// MapTiler tile URL (streets style)
   static String get mapTilerStreetsUrl =>
