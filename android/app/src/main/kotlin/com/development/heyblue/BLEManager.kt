@@ -1,11 +1,16 @@
 package com.development.heyblue
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
@@ -13,8 +18,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.EventChannel
 import java.net.HttpURLConnection
@@ -30,15 +40,26 @@ class BLEManager(private val context: Context) {
 
     companion object {
         private const val TAG = "BLEManager"
-        
+
         // Custom service UUID for SOS mesh
         val SERVICE_UUID: UUID = UUID.fromString("12345678-1234-1234-1234-123456789ABC")
-        
+
         // Characteristic UUID for SOS packet data
         val CHARACTERISTIC_UUID: UUID = UUID.fromString("12345678-1234-1234-1234-123456789ABD")
-        
+
         // Target MTU for consistent packet size
         const val TARGET_MTU = 244
+
+        // Notification channel for SOS alerts
+        const val SOS_NOTIFICATION_CHANNEL_ID = "sos_alert_channel"
+        const val SOS_NOTIFICATION_CHANNEL_NAME = "SOS Emergency Alerts"
+
+        // Status codes from SOS packet (byte 16)
+        const val STATUS_SAFE = 0x00
+        const val STATUS_SOS = 0x01
+        const val STATUS_MEDICAL = 0x02
+        const val STATUS_TRAPPED = 0x03
+        const val STATUS_SUPPLIES = 0x04
     }
 
     // Bluetooth components
@@ -65,6 +86,147 @@ class BLEManager(private val context: Context) {
         bluetoothAdapter = bluetoothManager?.adapter
         bluetoothLeAdvertiser = bluetoothAdapter?.bluetoothLeAdvertiser
         bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner
+        createNotificationChannel()
+    }
+
+    // =====================
+    // Notification Setup
+    // =====================
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val importance = NotificationManager.IMPORTANCE_HIGH
+            val channel = NotificationChannel(
+                SOS_NOTIFICATION_CHANNEL_ID,
+                SOS_NOTIFICATION_CHANNEL_NAME,
+                importance
+            ).apply {
+                description = "Emergency SOS alerts from nearby devices"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                setBypassDnd(true)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+            }
+            val notificationManager = context.getSystemService(NotificationManager::class.java)
+            notificationManager?.createNotificationChannel(channel)
+            Log.d(TAG, "SOS notification channel created")
+        }
+    }
+
+    private fun showSOSNotification(packetData: ByteArray) {
+        // Parse packet to extract status (byte 16) and location
+        if (packetData.size < 21) {
+            Log.w(TAG, "Packet too small for notification: ${packetData.size}")
+            return
+        }
+
+        val status = packetData[16].toInt() and 0xFF
+
+        // Don't notify for SAFE status
+        if (status == STATUS_SAFE) {
+            Log.d(TAG, "Received SAFE status, no notification needed")
+            return
+        }
+
+        // Extract lat/lon (bytes 8-15, stored as int * 10^7)
+        val latE7 = ((packetData[8].toInt() and 0xFF) or
+                    ((packetData[9].toInt() and 0xFF) shl 8) or
+                    ((packetData[10].toInt() and 0xFF) shl 16) or
+                    ((packetData[11].toInt() and 0xFF) shl 24))
+        val lonE7 = ((packetData[12].toInt() and 0xFF) or
+                    ((packetData[13].toInt() and 0xFF) shl 8) or
+                    ((packetData[14].toInt() and 0xFF) shl 16) or
+                    ((packetData[15].toInt() and 0xFF) shl 24))
+
+        val lat = latE7 / 10000000.0
+        val lon = lonE7 / 10000000.0
+
+        // Get status text and emoji
+        val (title, emoji) = when (status) {
+            STATUS_SOS -> "EMERGENCY SOS" to "🆘"
+            STATUS_MEDICAL -> "MEDICAL EMERGENCY" to "🏥"
+            STATUS_TRAPPED -> "PERSON TRAPPED" to "🚨"
+            STATUS_SUPPLIES -> "SUPPLIES NEEDED" to "📦"
+            else -> "EMERGENCY ALERT" to "⚠️"
+        }
+
+        val notificationTitle = "$emoji $title"
+        val notificationText = "Someone nearby needs help! Location: %.4f, %.4f".format(lat, lon)
+
+        // Create intent to open app when notification is tapped
+        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        intent?.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            System.currentTimeMillis().toInt(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, SOS_NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(notificationTitle)
+            .setContentText(notificationText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(notificationText))
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
+            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .build()
+
+        // Check notification permission for Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "Notification permission not granted")
+                return
+            }
+        }
+
+        try {
+            NotificationManagerCompat.from(context).notify(
+                System.currentTimeMillis().toInt(),
+                notification
+            )
+            Log.d(TAG, "SOS notification shown: $title")
+
+            // Also vibrate separately for extra alertness
+            vibrateDevice()
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Failed to show notification: ${e.message}")
+        }
+    }
+
+    private fun vibrateDevice() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                val vibrator = vibratorManager?.defaultVibrator
+                vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500, 200, 500), -1))
+            } else {
+                @Suppress("DEPRECATION")
+                val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500, 200, 500), -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(longArrayOf(0, 500, 200, 500, 200, 500), -1)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to vibrate: ${e.message}")
+        }
     }
 
     // =====================
@@ -427,6 +589,8 @@ class BLEManager(private val context: Context) {
                 if (status == BluetoothGatt.GATT_SUCCESS && characteristic?.uuid == CHARACTERISTIC_UUID) {
                     characteristic.value?.let { data ->
                         sendEvent("packetReceived", data.toList())
+                        // Show native notification for SOS alert
+                        showSOSNotification(data)
                     }
                 }
                 gatt?.disconnect()
@@ -514,5 +678,62 @@ class BLEManager(private val context: Context) {
     fun checkWifiStatus(): Boolean {
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         return wifiManager?.isWifiEnabled == true
+    }
+
+    /**
+     * Test notification by simulating an SOS packet reception
+     * Creates a fake packet with test coordinates and triggers the notification
+     */
+    fun testNotification() {
+        // Create a fake SOS packet (25 bytes)
+        // Format: [header 2B][userId 4B][seq 2B][lat 4B][lon 4B][status 1B][timestamp 4B][targetId 4B]
+        val testPacket = ByteArray(25)
+
+        // Header: 0xFFFF
+        testPacket[0] = 0xFF.toByte()
+        testPacket[1] = 0xFF.toByte()
+
+        // User ID: 0x12345678
+        testPacket[2] = 0x78.toByte()
+        testPacket[3] = 0x56.toByte()
+        testPacket[4] = 0x34.toByte()
+        testPacket[5] = 0x12.toByte()
+
+        // Sequence: 1
+        testPacket[6] = 0x01
+        testPacket[7] = 0x00
+
+        // Latitude: 37.7749 * 10^7 = 377749000 (San Francisco)
+        val lat = 377749000
+        testPacket[8] = (lat and 0xFF).toByte()
+        testPacket[9] = ((lat shr 8) and 0xFF).toByte()
+        testPacket[10] = ((lat shr 16) and 0xFF).toByte()
+        testPacket[11] = ((lat shr 24) and 0xFF).toByte()
+
+        // Longitude: -122.4194 * 10^7 = -1224194000
+        val lon = -1224194000
+        testPacket[12] = (lon and 0xFF).toByte()
+        testPacket[13] = ((lon shr 8) and 0xFF).toByte()
+        testPacket[14] = ((lon shr 16) and 0xFF).toByte()
+        testPacket[15] = ((lon shr 24) and 0xFF).toByte()
+
+        // Status: SOS (0x01)
+        testPacket[16] = STATUS_SOS.toByte()
+
+        // Timestamp: current time
+        val timestamp = (System.currentTimeMillis() / 1000).toInt()
+        testPacket[17] = (timestamp and 0xFF).toByte()
+        testPacket[18] = ((timestamp shr 8) and 0xFF).toByte()
+        testPacket[19] = ((timestamp shr 16) and 0xFF).toByte()
+        testPacket[20] = ((timestamp shr 24) and 0xFF).toByte()
+
+        // Target ID: 0 (broadcast)
+        testPacket[21] = 0x00
+        testPacket[22] = 0x00
+        testPacket[23] = 0x00
+        testPacket[24] = 0x00
+
+        Log.d(TAG, "Testing notification with simulated SOS packet")
+        showSOSNotification(testPacket)
     }
 }

@@ -352,7 +352,7 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
             ),
           // BLE status
           Padding(
-            padding: const EdgeInsets.only(right: 16),
+            padding: const EdgeInsets.only(right: 8),
             child: Icon(
               Icons.bluetooth,
               color: _bleState == BLEConnectionState.meshActive
@@ -360,6 +360,24 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
                   : Colors.grey,
               size: 20,
             ),
+          ),
+          // Test notification button
+          IconButton(
+            icon: const Icon(Icons.notifications_active, size: 20),
+            tooltip: 'Test Notification',
+            onPressed: () async {
+              final success = await _bleService.testNotification();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(success
+                        ? 'Test notification sent!'
+                        : 'Failed to send test notification'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            },
           ),
         ],
       ),

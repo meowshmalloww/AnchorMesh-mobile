@@ -645,6 +645,18 @@ class BLEService {
     }
   }
 
+  /// Test notification by simulating an SOS packet reception
+  /// This is for testing purposes only - triggers a notification without BLE
+  Future<bool> testNotification() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('testNotification');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      _errorController.add('Test notification failed: ${e.message}');
+      return false;
+    }
+  }
+
   /// Get user ID
   Future<int> getUserId() async {
     if (_userId == null) await _loadUserData();
