@@ -8,6 +8,7 @@ import '../services/ble_service.dart';
 import '../utils/rssi_calculator.dart';
 import '../models/sos_packet.dart';
 import '../models/sos_status.dart';
+import '../painters/compass_painter.dart';
 
 /// Signal Locator page for finding SOS signals
 /// Uses Kalman filter for RSSI smoothing and compass fusion for direction
@@ -26,7 +27,10 @@ class _SignalLocatorPageState extends State<SignalLocatorPage>
   final Map<String, KalmanFilter> _kalmanFilters = {};
 
   // State
-  double? _heading;
+  final ValueNotifier<double?> _headingNotifier = ValueNotifier<double?>(null);
+  // Keep _heading for logic reference where needed without UI updates
+  double? get _heading => _headingNotifier.value;
+
   bool _isScanning = false;
   bool _isCalibrating = false;
   String? _selectedDeviceId;
@@ -67,11 +71,18 @@ class _SignalLocatorPageState extends State<SignalLocatorPage>
   void _setupCompass() {
     _compassSub = FlutterCompass.events?.listen((event) {
       if (mounted) {
-        setState(() => _heading = event.heading);
+        // Optimization: Update notifier instead of setState
+        _headingNotifier.value = event.heading;
 
         // If calibrating, record RSSI at this heading
-        if (_isCalibrating && _heading != null && _selectedDeviceId != null) {
-          _directionFinder.addReading(_heading!, _currentRSSI.round());
+        // Access value directly
+        if (_isCalibrating &&
+            _headingNotifier.value != null &&
+            _selectedDeviceId != null) {
+          _directionFinder.addReading(
+            _headingNotifier.value!,
+            _currentRSSI.round(),
+          );
         }
       }
     });
@@ -528,29 +539,34 @@ class _SignalLocatorPageState extends State<SignalLocatorPage>
               alignment: Alignment.center,
               children: [
                 // Compass ring
-                AnimatedBuilder(
-                  animation: _radarController,
-                  builder: (context, child) {
-                    return Transform.rotate(
-                      angle: -((_heading ?? 0) * math.pi / 180),
-                      child: Container(
-                        width: 180,
-                        height: 180,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.grey[400]!,
-                            width: 2,
+                ValueListenableBuilder<double?>(
+                  valueListenable: _headingNotifier,
+                  builder: (context, heading, child) {
+                    return AnimatedBuilder(
+                      animation: _radarController,
+                      builder: (context, child) {
+                        return Transform.rotate(
+                          angle: -((heading ?? 0) * math.pi / 180),
+                          child: Container(
+                            width: 180,
+                            height: 180,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.grey[400]!,
+                                width: 2,
+                              ),
+                            ),
+                            child: CustomPaint(
+                              painter: CompassPainter(
+                                heading: heading ?? 0,
+                                bestHeading: _bestHeading,
+                                isCalibrating: _isCalibrating,
+                              ),
+                            ),
                           ),
-                        ),
-                        child: CustomPaint(
-                          painter: _CompassPainter(
-                            heading: _heading ?? 0,
-                            bestHeading: _bestHeading,
-                            isCalibrating: _isCalibrating,
-                          ),
-                        ),
-                      ),
+                        );
+                      },
                     );
                   },
                 ),
@@ -790,6 +806,13 @@ class _SignalLocatorPageState extends State<SignalLocatorPage>
                                 color: Colors.grey[600],
                               ),
                             ),
+                            Text(
+                              '${packet.latitude.toStringAsFixed(5)}, ${packet.longitude.toStringAsFixed(5)}',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.blueGrey,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -825,64 +848,4 @@ class _SignalLocatorPageState extends State<SignalLocatorPage>
       ),
     );
   }
-}
-
-/// Custom painter for compass direction indicator
-class _CompassPainter extends CustomPainter {
-  final double heading;
-  final int? bestHeading;
-  final bool isCalibrating;
-
-  _CompassPainter({
-    required this.heading,
-    this.bestHeading,
-    this.isCalibrating = false,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 10;
-
-    // Draw tick marks
-    final tickPaint = Paint()
-      ..color = Colors.grey[400]!
-      ..strokeWidth = 1;
-
-    for (int i = 0; i < 36; i++) {
-      final angle = (i * 10 - 90) * math.pi / 180;
-      final tickLength = i % 9 == 0 ? 15.0 : 8.0;
-      final start = Offset(
-        center.dx + (radius - tickLength) * math.cos(angle),
-        center.dy + (radius - tickLength) * math.sin(angle),
-      );
-      final end = Offset(
-        center.dx + radius * math.cos(angle),
-        center.dy + radius * math.sin(angle),
-      );
-      canvas.drawLine(start, end, tickPaint);
-    }
-
-    // Draw best heading indicator
-    if (bestHeading != null) {
-      final bestAngle = (bestHeading! - 90) * math.pi / 180;
-      final arrowPaint = Paint()
-        ..color = Colors.green
-        ..strokeWidth = 4
-        ..style = PaintingStyle.stroke;
-
-      final arrowStart = Offset(
-        center.dx + 30 * math.cos(bestAngle),
-        center.dy + 30 * math.sin(bestAngle),
-      );
-      final arrowEnd = Offset(
-        center.dx + (radius - 5) * math.cos(bestAngle),
-        center.dy + (radius - 5) * math.sin(bestAngle),
-      );
-      canvas.drawLine(arrowStart, arrowEnd, arrowPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

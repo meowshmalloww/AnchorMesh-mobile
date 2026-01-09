@@ -19,9 +19,12 @@ class MapPage extends StatefulWidget {
   State<MapPage> createState() => _MapPageState();
 }
 
-class _MapPageState extends State<MapPage> {
+class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
   final MapController _mapController = MapController();
   final BLEService _bleService = BLEService.instance;
+
+  @override
+  bool get wantKeepAlive => true;
 
   List<SOSPacket> _packets = [];
   double _currentZoom = 13.0;
@@ -81,6 +84,7 @@ class _MapPageState extends State<MapPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text("SOS Map"),

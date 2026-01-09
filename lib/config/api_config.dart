@@ -9,8 +9,7 @@ class ApiConfig {
 
   /// MapTiler API Key (DISABLED by default to save quota)
   /// Set useMapTiler = true to enable
-  /// Current Quota: ~3000 requests remaining
-  static const String mapTilerApiKey = '';
+  static const String mapTilerApiKey = ''; // !MapTIler APi Key
 
   /// IMPORTANT: Set to false to use free OSM tiles
   /// Each map view = 15-30 tile requests! Set to true only for demos
@@ -65,7 +64,7 @@ class ApiConfig {
   // ========================================
 
   /// Minimum earthquake magnitude to trigger alert
-  static const double minEarthquakeMagnitude = 5.0;
+  static const double minEarthquakeMagnitude = 6.0;
 
   /// How often to check USGS (minutes) - INCREASED to save quota
   static const int usgsCheckIntervalMinutes = 60;

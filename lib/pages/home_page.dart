@@ -1,9 +1,18 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/ble_service.dart';
-import '../services/connectivity_service.dart';
+import '../services/connectivity_service.dart' hide AlertLevel;
+import '../services/disaster_service.dart';
+import '../theme/resq_theme.dart';
+import '../painters/mesh_background_painter.dart';
+import '../painters/custom_borders.dart';
+import '../widgets/sos_button.dart';
+import 'disaster_map_page.dart';
 
-/// Home page with mesh status overview and quick actions
+/// ResQ Home Page - Premium Redesign
+///
+/// A mission-critical home screen with custom design language,
+/// physics-based animations, and mesh network visualization.
 class HomePage extends StatefulWidget {
   final Function(int)? onTabChange;
 
@@ -13,9 +22,10 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage>
+    with SingleTickerProviderStateMixin {
   final BLEService _bleService = BLEService.instance;
-  final DisasterMonitor _disasterMonitor = DisasterMonitor.instance;
+  final DisasterService _disasterService = DisasterService.instance;
   final ConnectivityChecker _connectivityChecker = ConnectivityChecker.instance;
 
   AlertLevel _alertLevel = AlertLevel.peace;
@@ -35,7 +45,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _setupListeners() {
-    _alertSub = _disasterMonitor.levelStream.listen((level) {
+    _alertSub = _disasterService.levelStream.listen((level) {
       if (mounted) setState(() => _alertLevel = level);
     });
 
@@ -63,297 +73,292 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
+  void _onSOSPressed() {
+    // Navigate to SOS tab
+    widget.onTabChange?.call(3);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textColor = isDark ? Colors.white : Colors.black;
+    final colors = context.resq;
+    final size = MediaQuery.of(context).size;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Mesh SOS'),
-        centerTitle: true,
-        actions: [
-          // Connection indicator
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Icon(
-              _isOnline ? Icons.wifi : Icons.wifi_off,
-              color: _isOnline ? Colors.green : Colors.red,
-              size: 20,
+      backgroundColor: colors.surface,
+      body: Stack(
+        children: [
+          // Mesh background
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: MeshBackground(
+                nodeColor: colors.meshNode,
+                lineColor: colors.meshLine,
+                glowColor: colors.meshGlow,
+              ),
+            ),
+          ),
+
+          // Main content
+          SafeArea(
+            child: Column(
+              children: [
+                // Top bar
+                _buildTopBar(colors),
+
+                // Alert banner
+                if (_alertLevel != AlertLevel.peace)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: _buildAlertBanner(colors),
+                  ),
+
+                // Status pills
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: _buildStatusRow(colors),
+                ),
+
+                const Spacer(),
+
+                // Central SOS Button
+                Center(
+                  child: SOSButton(
+                    onPressed: _onSOSPressed,
+                    isActive: _bleState == BLEConnectionState.meshActive,
+                    size: size.width * 0.45,
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // Subtitle
+                Text(
+                  _bleState == BLEConnectionState.meshActive
+                      ? 'MESH ACTIVE'
+                      : 'TAP TO SEND DISTRESS',
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 2,
+                  ),
+                ),
+
+                const Spacer(),
+
+                // Bottom action card
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  child: _buildDisasterCard(colors),
+                ),
+              ],
             ),
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadData,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // Alert banner
-            if (_alertLevel != AlertLevel.peace) _buildAlertBanner(),
+    );
+  }
 
-            // Status cards
-            _buildStatusCard(
-              icon: Icons.bluetooth,
-              title: 'Mesh Status',
-              value: _getBleStatusText(),
-              color: _getBleStatusColor(),
-            ),
-            const SizedBox(height: 12),
-            _buildStatusCard(
-              icon: Icons.sensors,
-              title: 'Active SOS Signals',
-              value: _activeSosCount.toString(),
-              color: _activeSosCount > 0 ? Colors.red : Colors.grey,
-            ),
-            const SizedBox(height: 12),
-            _buildStatusCard(
-              icon: Icons.cloud,
-              title: 'Internet',
-              value: _isOnline ? 'Connected' : 'Offline',
-              color: _isOnline ? Colors.green : Colors.orange,
-            ),
-
-            const SizedBox(height: 30),
-
-            // Quick actions
-            Text(
-              'QUICK ACTIONS',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[600],
-                letterSpacing: 1,
+  Widget _buildTopBar(ResQColors colors) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+      child: Row(
+        children: [
+          // Logo / Title
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'ResQ',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -1,
+                ),
               ),
+              Text(
+                'MESH NETWORK',
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 2,
+                ),
+              ),
+            ],
+          ),
+
+          const Spacer(),
+
+          // Connection indicator
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: ShapeDecoration(
+              color: _isOnline
+                  ? colors.statusOnline.withAlpha(38)
+                  : colors.statusOffline.withAlpha(38),
+              shape: const PillChamferBorder(chamferSize: 4),
             ),
-            const SizedBox(height: 12),
-            Row(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: _buildActionButton(
-                    icon: Icons.sos,
-                    label: 'Send SOS',
-                    color: Colors.red,
-                    onTap: () => _navigateToSOS(context),
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _isOnline
+                        ? colors.statusOnline
+                        : colors.statusOffline,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildActionButton(
-                    icon: Icons.map,
-                    label: 'View Map',
-                    color: Colors.blue,
-                    onTap: () => _navigateToMap(context),
+                const SizedBox(width: 6),
+                Text(
+                  _isOnline ? 'ONLINE' : 'OFFLINE',
+                  style: TextStyle(
+                    color: _isOnline
+                        ? colors.statusOnline
+                        : colors.statusOffline,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
                   ),
                 ),
               ],
             ),
-
-            const SizedBox(height: 30),
-
-            // Global Alerts Section
-            Text(
-              'GLOBAL ALERTS',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[600],
-                letterSpacing: 1,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildGlobalAlerts(),
-
-            const SizedBox(height: 30),
-
-            // Info section
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[900] : Colors.grey[100],
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.info_outline,
-                        color: Colors.blue,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'How it works',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    '• Your phone broadcasts SOS via Bluetooth\n'
-                    '• Nearby phones relay your message\n'
-                    '• Works even without internet\n'
-                    '• Keep the app open for best results',
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.5,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 30),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildGlobalAlerts() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    // Get cached alerts from disaster monitor
-    final cachedNOAA = _disasterMonitor.cachedNOAAResult;
-    final hasEarthquake = _disasterMonitor.cachedUSGSResult ?? false;
-
-    if (cachedNOAA == null && !hasEarthquake) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isDark ? Colors.grey[900] : Colors.grey[100],
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.green, size: 24),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'No Active Alerts',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    'All systems normal',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Column(
+  Widget _buildStatusRow(ResQColors colors) {
+    return Row(
       children: [
-        if (hasEarthquake)
-          Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.orange.withAlpha(20),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.orange),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.public, color: Colors.orange, size: 24),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Earthquake Alert',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange,
-                        ),
-                      ),
-                      Text(
-                        'Significant earthquake detected (M6.0+)',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+        Expanded(
+          child: _buildStatusPill(
+            icon: Icons.bluetooth,
+            label: 'Mesh',
+            value: _getBleStatusText(),
+            color: _getBleStatusColor(colors),
+            colors: colors,
           ),
-        if (cachedNOAA != null)
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.red.withAlpha(20),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.red),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.warning, color: Colors.red, size: 24),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        cachedNOAA['event'] ?? 'Weather Alert',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red,
-                        ),
-                      ),
-                      Text(
-                        cachedNOAA['severity'] ?? 'Severe',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildStatusPill(
+            icon: Icons.sensors,
+            label: 'Active',
+            value: '$_activeSosCount SOS',
+            color: _activeSosCount > 0 ? colors.accent : colors.textSecondary,
+            colors: colors,
           ),
+        ),
       ],
     );
   }
 
-  Widget _buildAlertBanner() {
-    final color = _alertLevel == AlertLevel.disaster
-        ? Colors.red
-        : Colors.orange;
+  Widget _buildStatusPill({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+    required ResQColors colors,
+  }) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withAlpha(30),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color),
+      padding: const EdgeInsets.all(16),
+      decoration: ShapeDecoration(
+        color: colors.surfaceElevated,
+        shape: TacticalCardBorder(
+          topLeftBevel: 12,
+          bottomRightBevel: 12,
+          radius: 8,
+          side: BorderSide(color: colors.meshLine, width: 1),
+        ),
+        shadows: [
+          BoxShadow(
+            color: colors.shadowColor,
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
-          Icon(Icons.warning_amber, color: color),
-          const SizedBox(width: 10),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withAlpha(38),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label.toUpperCase(),
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1,
+                  ),
+                ),
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAlertBanner(ResQColors colors) {
+    final color = _alertLevel == AlertLevel.disaster
+        ? colors.accent
+        : colors.statusWarning;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: ShapeDecoration(
+        color: color.withAlpha(38),
+        shape: HexagonalBevelBorder(
+          bevelDepth: 0.08,
+          side: BorderSide(color: color, width: 1.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: color, size: 24),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   _alertLevel.label.toUpperCase(),
-                  style: TextStyle(fontWeight: FontWeight.bold, color: color),
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                  ),
                 ),
                 Text(
                   _alertLevel.description,
-                  style: TextStyle(fontSize: 12, color: color),
+                  style: TextStyle(color: color.withAlpha(204), fontSize: 11),
                 ),
               ],
             ),
@@ -363,89 +368,69 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildStatusCard({
-    required IconData icon,
-    required String title,
-    required String value,
-    required Color color,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(10),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+  Widget _buildDisasterCard(ResQColors colors) {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const DisasterMapPage()),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: color.withAlpha(30),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: ShapeDecoration(
+          color: colors.surfaceElevated,
+          shape: TacticalCardBorder(
+            topLeftBevel: 20,
+            bottomRightBevel: 20,
+            radius: 12,
+            side: BorderSide(color: colors.meshLine, width: 1),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                ),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+          shadows: [
+            BoxShadow(
+              color: colors.shadowColor,
+              blurRadius: 20,
+              offset: const Offset(0, 8),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: color,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 20),
-          child: Column(
-            children: [
-              Icon(icon, color: Colors.white, size: 28),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [colors.accent, colors.accent.withAlpha(179)],
                 ),
+                borderRadius: BorderRadius.circular(12),
               ),
-            ],
-          ),
+              child: Icon(Icons.public, color: colors.textOnAccent, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'DISASTER MAP',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'View global events & local hazards',
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: colors.textSecondary, size: 24),
+          ],
         ),
       ),
     );
@@ -456,38 +441,30 @@ class _HomePageState extends State<HomePage> {
       case BLEConnectionState.meshActive:
         return 'Active';
       case BLEConnectionState.broadcasting:
-        return 'Broadcasting';
+        return 'Sending';
       case BLEConnectionState.scanning:
         return 'Scanning';
       case BLEConnectionState.bluetoothOff:
-        return 'Bluetooth Off';
+        return 'BT Off';
       case BLEConnectionState.unavailable:
-        return 'Unavailable';
+        return 'N/A';
       case BLEConnectionState.idle:
         return 'Idle';
     }
   }
 
-  Color _getBleStatusColor() {
+  Color _getBleStatusColor(ResQColors colors) {
     switch (_bleState) {
       case BLEConnectionState.meshActive:
-        return Colors.green;
+        return colors.statusOnline;
       case BLEConnectionState.broadcasting:
       case BLEConnectionState.scanning:
-        return Colors.blue;
+        return colors.accentSecondary;
       case BLEConnectionState.bluetoothOff:
       case BLEConnectionState.unavailable:
-        return Colors.red;
+        return colors.statusOffline;
       case BLEConnectionState.idle:
-        return Colors.grey;
+        return colors.textSecondary;
     }
-  }
-
-  void _navigateToSOS(BuildContext context) {
-    widget.onTabChange?.call(3); // SOS tab index
-  }
-
-  void _navigateToMap(BuildContext context) {
-    widget.onTabChange?.call(1); // Map tab index
   }
 }

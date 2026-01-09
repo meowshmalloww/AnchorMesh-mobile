@@ -4,49 +4,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import '../models/sos_packet.dart';
 import '../models/sos_status.dart';
+import '../models/ble_models.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../utils/rssi_calculator.dart';
 import 'packet_store.dart';
 import 'connectivity_service.dart';
 
-/// Connection state for BLE mesh networking
-enum BLEConnectionState {
-  unavailable,
-  bluetoothOff,
-  idle,
-  broadcasting,
-  scanning,
-  meshActive,
-}
-
-/// Echo event when own packet is detected being relayed
-class EchoEvent {
-  final int userId;
-  final int rssi;
-  final DateTime timestamp;
-
-  EchoEvent({
-    required this.userId,
-    required this.rssi,
-    required this.timestamp,
-  });
-}
-
-/// Verification status for SOS signals
-class VerificationStatus {
-  final int userId;
-  final int confirmations;
-  final bool isVerified;
-  final List<int> confirmingDevices;
-
-  VerificationStatus({
-    required this.userId,
-    required this.confirmations,
-    required this.isVerified,
-    required this.confirmingDevices,
-  });
-
-  static const int requiredConfirmations = 3;
-}
+// Re-export for backward compatibility
+export '../models/ble_models.dart';
 
 /// BLE Service for cross-platform mesh networking
 class BLEService {
@@ -78,6 +43,8 @@ class BLEService {
   final PacketStore _packetStore = PacketStore.instance;
   final RSSICalculator _rssiCalculator = RSSICalculator();
   final ConnectivityChecker _connectivityChecker = ConnectivityChecker.instance;
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
   // State
   BLEConnectionState _state = BLEConnectionState.idle;
@@ -169,6 +136,70 @@ class BLEService {
 
     // Load user data
     _loadUserData();
+
+    // Initialize notifications
+    _initNotifications();
+  }
+
+  Future<void> _initNotifications() async {
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const iosSettings = DarwinInitializationSettings();
+    const settings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+    await _notificationsPlugin.initialize(settings);
+
+    // Create channel for Android
+    const androidChannel = AndroidNotificationChannel(
+      'sos_alerts',
+      'SOS Alerts',
+      description: 'High priority alerts for incoming SOS signals',
+      importance: Importance.max,
+    );
+
+    await _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(androidChannel);
+  }
+
+  Future<void> _showNotification(SOSPacket packet) async {
+    // Don't notify for SAFE or own packets
+    if (packet.status == SOSStatus.safe || packet.userId == _userId) return;
+
+    final title = 'SOS DETECTED: ${packet.status.description}';
+    final body =
+        'Signal from user ${packet.userId.toRadixString(16).toUpperCase()}';
+
+    const androidDetails = AndroidNotificationDetails(
+      'sos_alerts',
+      'SOS Alerts',
+      channelDescription: 'High priority alerts for incoming SOS signals',
+      importance: Importance.max,
+      priority: Priority.high,
+      color: Color(0xFFFF0000), // Red
+    );
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    const details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await _notificationsPlugin.show(
+      packet.uniqueId.hashCode,
+      title,
+      body,
+      details,
+    );
   }
 
   void _cleanupSeenPackets() {
@@ -296,6 +327,11 @@ class BLEService {
 
         // Add verification (we received it, so we confirm it)
         _addVerification(packet.userId, _userId!);
+
+        // Show Notification
+        if (packet.targetId == 0 || packet.targetId == _userId) {
+          _showNotification(packet);
+        }
       }
     } catch (e) {
       _errorController.add('Failed to parse packet: $e');
@@ -388,6 +424,17 @@ class BLEService {
       return;
     }
 
+    // Check for congestion
+    if (_broadcastQueue.length > 100) {
+      if (_broadcastQueue.length % 50 == 0) {
+        _errorController.add(
+          'High network congestion: ${_broadcastQueue.length} active signals.',
+        );
+      }
+      // Prioritize: drop oldest non-SOS packets if possible?
+      // For now just warn.
+    }
+
     // Add or update in queue
     final existingIndex = _broadcastQueue.indexWhere(
       (p) => p.userId == packet.userId,
@@ -402,6 +449,7 @@ class BLEService {
   }
 
   /// Start broadcasting own SOS
+  /// Start broadcasting own SOS
   Future<bool> startBroadcasting({
     required double latitude,
     required double longitude,
@@ -409,9 +457,26 @@ class BLEService {
   }) async {
     if (_userId == null) await _loadUserData();
 
+    // Check BLE 5 support
+    final hasBle5 = await supportsBle5();
+
+    // Get user preference from settings (stored as string in DB)
+    final db = await _packetStore.database;
+    final res = await db.query(
+      'user_settings',
+      where: 'key = ?',
+      whereArgs: ['ble_version'],
+    );
+    final prefVersion = res.isNotEmpty
+        ? res.first['value'] as String
+        : 'legacy';
+
+    // Determine mode: Force Legacy if device doesn't support BLE 5
+    final useExtended = hasBle5 && prefVersion == 'modern';
+
     _sequence = await _packetStore.incrementSequence();
 
-    // Reset echo tracking for new broadcast
+    // Reset echo tracking regarding new broadcast
     _echoCount = 0;
     _echoSources.clear();
     _handshakeCount = 0;
@@ -428,11 +493,12 @@ class BLEService {
     _broadcastQueue.insert(0, _currentBroadcast!);
 
     // Start round-robin broadcasting
-    _startBroadcastLoop();
+    _startBroadcastLoop(useExtended: useExtended);
 
     try {
       final result = await _channel.invokeMethod<bool>('startBroadcasting', {
         'packet': _currentBroadcast!.toBytes(),
+        'extended': useExtended, // Tell native to use Extended Adv
       });
       return result ?? false;
     } on PlatformException catch (e) {
@@ -479,7 +545,7 @@ class BLEService {
   }
 
   /// Start round-robin broadcast loop with smart prioritization
-  void _startBroadcastLoop() {
+  void _startBroadcastLoop({bool useExtended = false}) {
     _broadcastTimer?.cancel();
     _broadcastTick = 0;
 
@@ -523,6 +589,7 @@ class BLEService {
       try {
         await _channel.invokeMethod<bool>('startBroadcasting', {
           'packet': packetToBroadcast.toBytes(),
+          'extended': useExtended,
         });
       } catch (_) {}
     });

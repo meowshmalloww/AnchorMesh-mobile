@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/sos_packet.dart';
@@ -61,6 +62,7 @@ class PacketStore {
         isSynced INTEGER DEFAULT 0,
         targetId INTEGER DEFAULT 0,
         receivedAt INTEGER NOT NULL,
+        isArchived INTEGER DEFAULT 0,
         UNIQUE(userId, sequence)
       )
     ''');
@@ -109,37 +111,37 @@ class PacketStore {
   Future<bool> savePacket(SOSPacket packet) async {
     final db = await database;
 
-    // Check if we've seen this packet before
-    if (await hasSeenPacket(packet.uniqueId)) {
-      // Check if this is a newer sequence from same user
-      final existing = await getPacketByUserId(packet.userId);
-      if (existing != null && packet.sequence > existing.sequence) {
-        // Update to newer version
-        await db.update(
-          'packets',
-          packet.toJson()
-            ..['receivedAt'] = DateTime.now().millisecondsSinceEpoch,
-          where: 'userId = ?',
-          whereArgs: [packet.userId],
-        );
-        await _markSeen(packet.uniqueId);
-        return true;
-      }
-      return false; // Duplicate, ignore
-    }
-
-    // Check if expired
-    if (packet.isExpired) {
-      return false;
-    }
-
     try {
+      if (await hasSeenPacket(packet.uniqueId)) {
+        // Check if this is a newer sequence from same user
+        final existing = await getPacketByUserId(packet.userId);
+        if (existing != null && packet.sequence > existing.sequence) {
+          // Update to newer version
+          await db.update(
+            'packets',
+            packet.toJson()
+              ..['receivedAt'] = DateTime.now().millisecondsSinceEpoch,
+            where: 'userId = ?',
+            whereArgs: [packet.userId],
+          );
+          await _markSeen(packet.uniqueId);
+          return true;
+        }
+        return false; // Duplicate, ignore
+      }
+
+      // Check if expired
+      if (packet.isExpired) {
+        return false;
+      }
+
       // Insert new packet
       await db.insert(
         'packets',
         packet.toJson()..['receivedAt'] = DateTime.now().millisecondsSinceEpoch,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      // Mark seen immediately
       await _markSeen(packet.uniqueId);
       return true;
     } catch (e) {
@@ -188,10 +190,17 @@ class PacketStore {
         DateTime.now().millisecondsSinceEpoch ~/ 1000 - SOSPacket.maxAgeSeconds;
     final result = await db.query(
       'packets',
-      where: 'timestamp > ? AND status != ?',
+      where: 'timestamp > ? AND status != ? AND isArchived = 0',
       whereArgs: [cutoff, SOSStatus.safe.code],
       orderBy: 'timestamp DESC',
     );
+    return result.map((r) => SOSPacket.fromJson(r)).toList();
+  }
+
+  /// Get all history packets (including archived)
+  Future<List<SOSPacket>> getHistoryPackets() async {
+    final db = await database;
+    final result = await db.query('packets', orderBy: 'receivedAt DESC');
     return result.map((r) => SOSPacket.fromJson(r)).toList();
   }
 
@@ -220,11 +229,21 @@ class PacketStore {
     final cutoff =
         DateTime.now().millisecondsSinceEpoch ~/ 1000 - SOSPacket.maxAgeSeconds;
 
-    // Delete expired packets
-    final deletedPackets = await db.delete(
+    // Archive expired packets instead of deleting
+    final archivedCount = await db.update(
+      'packets',
+      {'isArchived': 1},
+      where: 'timestamp < ? AND isArchived = 0',
+      whereArgs: [cutoff],
+    );
+
+    // Delete very old history (e.g. > 30 days) to save space
+    final historyCutoff =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 - (86400 * 30);
+    await db.delete(
       'packets',
       where: 'timestamp < ?',
-      whereArgs: [cutoff],
+      whereArgs: [historyCutoff],
     );
 
     // Delete old seen entries (keep last 24 hours)
@@ -237,7 +256,20 @@ class PacketStore {
       whereArgs: [seenCutoff],
     );
 
-    return deletedPackets;
+    return archivedCount;
+  }
+
+  /// Get storage usage in bytes (estimate)
+  Future<int> getStorageSize() async {
+    final db = await database;
+    final path = db.path;
+    try {
+      final file = File(path); // Requires dart:io
+      if (await file.exists()) {
+        return await file.length();
+      }
+    } catch (_) {}
+    return 0;
   }
 
   /// Clear all local data (packets, seen entries, queue)
@@ -248,6 +280,20 @@ class PacketStore {
       await txn.delete('seen_packets');
       await txn.delete('broadcast_queue');
     });
+  }
+
+  /// Clear history only (archived + expired packets, keep active ones)
+  Future<int> clearHistory() async {
+    final db = await database;
+    final cutoff =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 - SOSPacket.maxAgeSeconds;
+
+    // Delete archived or expired packets
+    return await db.delete(
+      'packets',
+      where: 'isArchived = 1 OR timestamp < ? OR status = ?',
+      whereArgs: [cutoff, SOSStatus.safe.index],
+    );
   }
 
   // ==================

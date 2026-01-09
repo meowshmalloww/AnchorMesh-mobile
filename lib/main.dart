@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
 import 'theme_notifier.dart';
+import 'theme/resq_theme.dart';
 import 'services/platform_service.dart';
 import 'services/connectivity_service.dart';
+import 'widgets/blackout_overlay.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,6 +36,8 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  StreamSubscription<bool>? _autoActivateSub;
+
   @override
   void initState() {
     super.initState();
@@ -42,7 +47,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _checkLowPowerMode();
 
     // Listen for auto-activate events
-    PlatformService.instance.autoActivateStream.listen((activated) {
+    _autoActivateSub = PlatformService.instance.autoActivateStream.listen((
+      activated,
+    ) {
       if (activated) {
         _showAutoActivateAlert();
       }
@@ -51,6 +58,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _autoActivateSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -142,20 +150,34 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           themeMode: themeMode,
           theme: ThemeData(
             brightness: Brightness.light,
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-            scaffoldBackgroundColor: Colors.white,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFFE63946),
+              brightness: Brightness.light,
+            ),
+            scaffoldBackgroundColor: ResQColors.light.surface,
             useMaterial3: true,
+            extensions: const [ResQColors.light],
           ),
           darkTheme: ThemeData(
             brightness: Brightness.dark,
-            scaffoldBackgroundColor: Colors.black,
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFFFF4757),
+              brightness: Brightness.dark,
+            ),
+            scaffoldBackgroundColor: ResQColors.dark.surface,
+            appBarTheme: AppBarTheme(
+              backgroundColor: ResQColors.dark.surface,
+              foregroundColor: ResQColors.dark.textPrimary,
             ),
             useMaterial3: true,
+            extensions: const [ResQColors.dark],
           ),
           home: const HomeScreen(),
+          builder: (context, child) {
+            return Stack(
+              children: [if (child != null) child, const BlackoutOverlay()],
+            );
+          },
         );
       },
     );

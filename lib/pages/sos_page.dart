@@ -7,7 +7,12 @@ import '../models/sos_packet.dart';
 import '../models/sos_status.dart';
 import '../services/ble_service.dart';
 import '../services/connectivity_service.dart';
+// import 'dart:ui'; // Unused
+import '../theme/resq_theme.dart';
+import '../painters/mesh_background_painter.dart';
 import '../utils/rssi_calculator.dart';
+import '../services/blackout_service.dart';
+// import '../services/connectivity_service.dart'; // Already imported above if needed, check lines 1-10
 
 class SOSPage extends StatefulWidget {
   const SOSPage({super.key});
@@ -18,8 +23,7 @@ class SOSPage extends StatefulWidget {
 
 class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   // Location
-  String _locationMessage = "Tap to get location";
-  bool _isLoadingLocation = false;
+  // Location
   double? _latitude;
   double? _longitude;
 
@@ -57,6 +61,7 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   StreamSubscription? _echoSubscription;
   StreamSubscription? _handshakeSubscription;
   StreamSubscription? _verificationSubscription;
+  StreamSubscription<Position>? _locationSub; // New location subscription
 
   @override
   void initState() {
@@ -65,8 +70,12 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     _setupListeners();
     _loadActivePackets();
 
+    // Listen for Blackout Mode to optimize battery
+    BlackoutService.instance.enabled.addListener(_handleBlackoutChange);
+
     // Initial WiFi check
     _checkWifiStatus();
+    _getCurrentLocation(); // Auto-fetch location on load
 
     // Check WiFi status occasionally while open
     _wifiCheckTimer = Timer.periodic(
@@ -211,55 +220,60 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     _echoSubscription?.cancel();
     _handshakeSubscription?.cancel();
     _verificationSubscription?.cancel();
+    _verificationSubscription?.cancel();
+    BlackoutService.instance.enabled.removeListener(_handleBlackoutChange);
+    _locationSub?.cancel();
     _wifiCheckTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _getCurrentLocation() async {
-    setState(() {
-      _isLoadingLocation = true;
-      _locationMessage = "Fetching...";
-    });
-
-    try {
-      final enabled = await Geolocator.isLocationServiceEnabled();
-      if (!enabled) {
-        if (mounted) {
-          setState(() {
-            _locationMessage = "Location disabled";
-            _isLoadingLocation = false;
-          });
-        }
-        return;
+  void _handleBlackoutChange() {
+    if (BlackoutService.instance.enabled.value) {
+      if (_pulseController.isAnimating) {
+        _pulseController.stop();
       }
+    } else {
+      // Resume if broadcasting
+      if (_isBroadcasting && !_pulseController.isAnimating) {
+        _pulseController.repeat(reverse: true);
+      }
+    }
+  }
 
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
+  void _startLocationTracking() {
+    const settings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10, // Throttle updates: only if moved 10m
+    );
+
+    _locationSub?.cancel();
+    _locationSub = Geolocator.getPositionStream(locationSettings: settings)
+        .listen((position) {
           if (mounted) {
             setState(() {
-              _locationMessage = "Permission denied";
-              _isLoadingLocation = false;
+              _latitude = position.latitude;
+              _longitude = position.longitude;
             });
+
+            // Update broadcast packet if active
+            if (_isBroadcasting) {
+              _bleService.startMeshMode(
+                latitude: position.latitude,
+                longitude: position.longitude,
+                status: _selectedStatus,
+              );
+            }
           }
-          return;
-        }
-      }
+        });
+  }
 
-      if (permission == LocationPermission.deniedForever) {
-        if (mounted) {
-          setState(() {
-            _locationMessage = "Permission blocked";
-            _isLoadingLocation = false;
-          });
-        }
-        return;
-      }
-
+  Future<void> _getCurrentLocation() async {
+    // Only used for initial fix
+    try {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 5),
         ),
       );
 
@@ -267,17 +281,11 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
         setState(() {
           _latitude = position.latitude;
           _longitude = position.longitude;
-          _locationMessage =
-              "${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}";
-          _isLoadingLocation = false;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _locationMessage = "Error";
-          _isLoadingLocation = false;
-        });
+        debugPrint("Location error: $e");
       }
     }
   }
@@ -293,10 +301,15 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     if (_isBroadcasting) {
       await _bleService.stopAll();
       _pulseController.stop();
+      _locationSub?.cancel(); // Stop tracking location
       setState(() => _isBroadcasting = false);
     } else {
+      // Start location tracking first
+      _startLocationTracking();
+
       if (_latitude == null || _longitude == null) {
-        await _getCurrentLocation();
+        // Wait briefly for location
+        await Future.delayed(const Duration(seconds: 1));
       }
 
       if (_latitude == null || _longitude == null) {
@@ -322,543 +335,595 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.resq;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textColor = isDark ? Colors.white : Colors.black;
-    final subColor = isDark ? Colors.white70 : Colors.black54;
-    final statusColor = Color(_selectedStatus.colorValue);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("SOS Emergency"),
-        actions: [
-          // Alert level indicator
-          if (_alertLevel != AlertLevel.peace)
-            Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: _alertLevel == AlertLevel.disaster
-                    ? Colors.red
-                    : Colors.orange,
-                borderRadius: BorderRadius.circular(12),
+      backgroundColor: colors.surface,
+      body: Stack(
+        children: [
+          // Mesh background
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: MeshBackground(
+                nodeColor: colors.meshNode,
+                lineColor: colors.meshLine,
+                glowColor: colors.meshGlow,
               ),
-              child: Text(
-                _alertLevel.label.toUpperCase(),
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          // BLE status
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Icon(
-              Icons.bluetooth,
-              color: _bleState == BLEConnectionState.meshActive
-                  ? Colors.blue
-                  : Colors.grey,
-              size: 20,
             ),
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Low power warning
-            if (_isLowPowerMode)
-              Container(
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withAlpha(40),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.battery_alert, color: Colors.orange, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Low Power Mode ON. Disable for reliable mesh.',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
 
-            // WiFi Warning
-            if (_isWifiEnabled)
-              Container(
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withAlpha(40),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.wifi_off, color: Colors.blue, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: RichText(
-                        text: TextSpan(
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isDark ? Colors.white : Colors.black,
-                          ),
-                          children: [
-                            const TextSpan(
-                              text: 'Starlink/WiFi is ON.',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const TextSpan(
-                              text:
-                                  ' Turn off for better mesh range if not needed.',
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          SafeArea(
+            child: Column(
+              children: [
+                _buildTopBar(colors),
 
-            // Status selection
-            const SizedBox(height: 8),
-            Text(
-              "SELECT YOUR STATUS",
-              style: TextStyle(fontSize: 12, color: subColor, letterSpacing: 1),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: SOSStatus.values.where((s) => s != SOSStatus.safe).map((
-                status,
-              ) {
-                final isSelected = _selectedStatus == status;
-                final color = Color(status.colorValue);
-                return GestureDetector(
-                  onTap: _isBroadcasting
-                      ? null
-                      : () => setState(() => _selectedStatus = status),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
+                // Alert Banner
+                if (_alertLevel != AlertLevel.peace)
+                  Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
+                      horizontal: 20,
                       vertical: 8,
                     ),
-                    decoration: BoxDecoration(
-                      color: isSelected ? color : color.withAlpha(30),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: color, width: 2),
+                    child: _buildAlertBanner(colors),
+                  ),
+
+                // Low Power Warning
+                if (_isLowPowerMode)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 4,
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                    child: _buildWarningBanner(
+                      icon: Icons.battery_alert,
+                      text: "Low Power Mode ON. Mesh reliability reduced.",
+                      color: Colors.orange,
+                    ),
+                  ),
+
+                // WiFi Warning
+                if (_isWifiEnabled)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 4,
+                    ),
+                    child: _buildWarningBanner(
+                      icon: Icons.wifi_off,
+                      text: "WiFi/Starlink ON. Turn off for better range.",
+                      color: Colors.blue,
+                    ),
+                  ),
+
+                // Main Content
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
                       children: [
-                        Icon(
-                          status.icon,
-                          color: isSelected ? Colors.white : color,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          status.label,
-                          style: TextStyle(
-                            color: isSelected ? Colors.white : color,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
+                        // Status Selector
+                        _buildStatusSelector(colors, isDark),
+
+                        const SizedBox(height: 20),
+
+                        // Blackout Mode Trigger
+                        GestureDetector(
+                          onTap: () {
+                            HapticFeedback.mediumImpact();
+                            BlackoutService.instance.enable();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colors.surfaceElevated,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: colors.meshLine.withAlpha(50),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.dark_mode,
+                                  size: 16,
+                                  color: colors.textSecondary,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  "BLACKOUT MODE",
+                                  style: TextStyle(
+                                    color: colors.textSecondary,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
+
+                        const SizedBox(height: 20),
+
+                        // Giant SOS Button (Custom implementation for this page)
+                        _buildMainSOSButton(colors),
+
+                        const SizedBox(height: 40),
+
+                        // Stats / Feedback
+                        if (_isBroadcasting)
+                          _buildMeshStats(colors)
+                        else if (_receivedPackets.isNotEmpty)
+                          _buildNearbySignals(colors),
+
+                        const SizedBox(height: 20),
                       ],
                     ),
                   ),
-                );
-              }).toList(),
-            ),
-
-            const SizedBox(height: 30),
-
-            // Main SOS button
-            AnimatedBuilder(
-              animation: _pulseAnimation,
-              builder: (context, child) {
-                return Transform.scale(
-                  scale: _isBroadcasting ? _pulseAnimation.value : 1.0,
-                  child: GestureDetector(
-                    onTap: _toggleBroadcast,
-                    child: Container(
-                      width: 160,
-                      height: 160,
-                      decoration: BoxDecoration(
-                        color: _isBroadcasting
-                            ? statusColor
-                            : statusColor.withAlpha(200),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: statusColor.withAlpha(
-                              _isBroadcasting ? 150 : 80,
-                            ),
-                            blurRadius: _isBroadcasting ? 40 : 20,
-                            spreadRadius: _isBroadcasting ? 12 : 4,
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            _isBroadcasting ? Icons.stop : _selectedStatus.icon,
-                            size: 36,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            _isBroadcasting ? "STOP" : _selectedStatus.label,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          if (_isBroadcasting)
-                            const Text(
-                              "Broadcasting...",
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 10,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-
-            const SizedBox(height: 30),
-
-            // Mesh feedback stats (only when broadcasting)
-            if (_isBroadcasting) ...[
-              _buildMeshFeedbackCard(),
-              const SizedBox(height: 20),
-            ],
-
-            // Location
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[900] : Colors.grey[100],
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.location_on, color: Colors.blue, size: 20),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _locationMessage,
-                      style: TextStyle(color: textColor, fontSize: 13),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: _isLoadingLocation ? null : _getCurrentLocation,
-                    icon: _isLoadingLocation
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.refresh, size: 20),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-            const Divider(),
-
-            // Nearby SOS signals
-            if (_receivedPackets.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  const Icon(Icons.sensors, size: 18, color: Colors.blue),
-                  const SizedBox(width: 8),
-                  Text(
-                    "Nearby Signals (${_receivedPackets.length})",
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              ..._receivedPackets
-                  .take(5)
-                  .map((packet) => _buildPacketCard(packet)),
-            ],
-
-            // Help text
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.withAlpha(20),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.info_outline,
-                        color: Colors.blue,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        "Mesh SOS",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    "• No internet? Your signal relays via nearby phones\n• Keep app open for best results\n• Safe? Tap STOP to cancel",
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.4,
-                      color: subColor,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 30),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPacketCard(SOSPacket packet) {
-    final color = Color(packet.status.colorValue);
-    final distance = _bleService.rssiCalculator.getSmoothedDistance(
-      packet.userId.toRadixString(16),
-    );
-    final ageMinutes = packet.ageSeconds ~/ 60;
-    final verification = _bleService.getVerificationStatus(packet.userId);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: color.withAlpha(20),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withAlpha(100)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            child: Icon(packet.status.icon, color: Colors.white, size: 18),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      packet.status.description,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    if (verification != null && verification.isVerified) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          '✓ VERIFIED',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
                 ),
-                Text(
-                  "${packet.latitude.toStringAsFixed(4)}, ${packet.longitude.toStringAsFixed(4)} • ${ageMinutes}m ago",
-                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                ),
-                if (verification != null)
-                  Text(
-                    'Confirmed by ${verification.confirmations} device${verification.confirmations != 1 ? 's' : ''}',
-                    style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-                  ),
               ],
             ),
           ),
-          if (distance != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.grey[200],
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                distance < 100
-                    ? "${distance.toStringAsFixed(0)}m"
-                    : "${(distance / 1000).toStringAsFixed(1)}km",
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
         ],
       ),
     );
   }
 
-  Widget _buildMeshFeedbackCard() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+  Widget _buildTopBar(ResQColors colors) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shield_outlined, color: colors.accent, size: 24),
+              const SizedBox(width: 12),
+              Text(
+                'EMERGENCY',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 3,
+                ),
+              ),
+            ],
+          ),
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.grey[900] : Colors.grey[100],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: _echoCount > 0
-              ? Colors.green.withAlpha(100)
-              : Colors.grey.withAlpha(50),
+          // Connection Status
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: ShapeDecoration(
+              color: _bleState == BLEConnectionState.meshActive
+                  ? colors.statusOnline.withAlpha(30)
+                  : colors.surfaceElevated,
+              shape: const StadiumBorder(),
+              shadows: [
+                if (_bleState == BLEConnectionState.meshActive)
+                  BoxShadow(
+                    color: colors.statusOnline.withAlpha(50),
+                    blurRadius: 10,
+                  ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: _bleState == BLEConnectionState.meshActive
+                        ? colors.statusOnline
+                        : colors.textSecondary,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _bleState == BLEConnectionState.meshActive
+                      ? 'MESH ACTIVE'
+                      : 'STANDBY',
+                  style: TextStyle(
+                    color: _bleState == BLEConnectionState.meshActive
+                        ? colors.statusOnline
+                        : colors.textSecondary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusSelector(ResQColors colors, bool isDark) {
+    return Column(
+      children: [
+        Text(
+          'SELECT SITUATION',
+          style: TextStyle(
+            color: colors.textSecondary,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 2,
+          ),
         ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          alignment: WrapAlignment.center,
+          children: SOSStatus.values.where((s) => s != SOSStatus.safe).map((
+            status,
+          ) {
+            final isSelected = _selectedStatus == status;
+            final statusColor = Color(status.colorValue);
+
+            return GestureDetector(
+              onTap: _isBroadcasting
+                  ? null
+                  : () => setState(() => _selectedStatus = status),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? statusColor.withAlpha(isDark ? 50 : 30)
+                      : colors.surfaceElevated,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: isSelected
+                        ? statusColor
+                        : colors.meshLine.withAlpha(50),
+                    width: isSelected ? 2 : 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      status.icon,
+                      size: 18,
+                      color: isSelected ? statusColor : colors.textSecondary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      status.label,
+                      style: TextStyle(
+                        color: isSelected ? statusColor : colors.textSecondary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMainSOSButton(ResQColors colors) {
+    // Determine color based on status (or default red)
+    final statusColor = Color(_selectedStatus.colorValue);
+
+    return Center(
+      child: GestureDetector(
+        onTapDown: (_) => Vibration.vibrate(duration: 20),
+        onTap: _toggleBroadcast,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          width: 200,
+          height: 200,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: _isBroadcasting
+                  ? [statusColor, statusColor.withAlpha(200)]
+                  : [colors.surfaceElevated, colors.surface],
+            ),
+            border: Border.all(
+              color: _isBroadcasting
+                  ? statusColor
+                  : colors.meshLine.withAlpha(50),
+              width: 1,
+            ),
+            boxShadow: [
+              // Outer glow when active
+              if (_isBroadcasting)
+                BoxShadow(
+                  color: statusColor.withAlpha(100),
+                  blurRadius: 50,
+                  spreadRadius: 10,
+                ),
+              // Inner depth
+              BoxShadow(
+                color: colors.shadowColor,
+                blurRadius: 30,
+                offset: const Offset(0, 15),
+              ),
+            ],
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Ripples
+              if (_isBroadcasting)
+                ScaleTransition(
+                  scale: _pulseAnimation,
+                  child: Container(
+                    width: 200,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: statusColor.withAlpha(100),
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    _isBroadcasting ? Icons.stop_rounded : _selectedStatus.icon,
+                    size: 64,
+                    color: _isBroadcasting ? Colors.white : statusColor,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _isBroadcasting ? "STOP" : "ACTIVATE",
+                    style: TextStyle(
+                      color: _isBroadcasting
+                          ? Colors.white
+                          : colors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  if (_isBroadcasting)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        "BROADCASTING",
+                        style: TextStyle(
+                          color: Colors.white.withAlpha(200),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMeshStats(ResQColors colors) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: colors.surfaceElevated.withAlpha(200),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: colors.meshLine.withAlpha(50)),
       ),
       child: Column(
         children: [
           Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.share,
-                size: 18,
-                color: _echoCount > 0 ? Colors.green : Colors.grey,
-              ),
+              Icon(Icons.hub, color: colors.accent, size: 16),
               const SizedBox(width: 8),
-              const Text(
-                'Mesh Status',
-                style: TextStyle(fontWeight: FontWeight.bold),
+              Text(
+                "MESH NETWORK FEEDBACK",
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.5,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildStatColumn(
-                icon: Icons.repeat,
-                value: '$_echoCount',
-                label: 'Echoes',
-                color: Colors.green,
-              ),
-              _buildStatColumn(
-                icon: Icons.devices,
-                value: '$_echoSources',
-                label: 'Relays',
-                color: Colors.blue,
-              ),
-              _buildStatColumn(
-                icon: Icons.handshake,
-                value: '$_handshakeCount',
-                label: 'Handshakes',
-                color: Colors.purple,
-              ),
-              _buildStatColumn(
-                icon: Icons.check_circle,
-                value: _myVerification?.isVerified == true ? 'YES' : 'NO',
-                label: 'Verified',
-                color: _myVerification?.isVerified == true
-                    ? Colors.green
-                    : Colors.orange,
-              ),
+              _buildStatItem("RELAYS", "$_echoSources", colors),
+              _buildStatItem("ECHOES", "$_echoCount", colors),
+              _buildStatItem("HANDSHAKES", "$_handshakeCount", colors),
             ],
           ),
-          if (_echoCount > 0) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.green.withAlpha(20),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.check, color: Colors.green, size: 16),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$_echoCount copies being carried by $_echoSources devices',
-                    style: const TextStyle(fontSize: 12, color: Colors.green),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          const SizedBox(height: 12),
+          _buildStatItem(
+            "VERIFIED",
+            _myVerification?.isVerified == true ? "YES" : "NO",
+            colors,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildStatColumn({
-    required IconData icon,
-    required String value,
-    required String label,
-    required Color color,
-  }) {
+  Widget _buildStatItem(String label, String value, ResQColors colors) {
     return Column(
       children: [
-        Icon(icon, color: color, size: 20),
-        const SizedBox(height: 4),
         Text(
           value,
           style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: color,
+            color: colors.textPrimary,
+            fontSize: 24,
+            fontWeight: FontWeight.w900,
           ),
         ),
-        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: colors.textSecondary,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildNearbySignals(ResQColors colors) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 12),
+          child: Text(
+            "NEARBY SIGNALS (${_receivedPackets.length})",
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.5,
+            ),
+          ),
+        ),
+        ..._receivedPackets
+            .take(3)
+            .map((packet) => _buildPacketCard(packet, colors)),
+      ],
+    );
+  }
+
+  Widget _buildPacketCard(SOSPacket packet, ResQColors colors) {
+    final statusColor = Color(packet.status.colorValue);
+    final distance = _bleService.rssiCalculator.getSmoothedDistance(
+      packet.userId.toRadixString(16),
+    );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surfaceElevated,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: statusColor.withAlpha(50)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: statusColor.withAlpha(30),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(packet.status.icon, color: statusColor, size: 20),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  packet.status.description,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  "${(packet.ageSeconds / 60).toStringAsFixed(0)}m ago • ${distance != null ? "${distance.round()}m away" : "Unknown dist"}",
+                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWarningBanner({
+    required IconData icon,
+    required String text,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withAlpha(50)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAlertBanner(ResQColors colors) {
+    final isDisaster = _alertLevel == AlertLevel.disaster;
+    final color = isDisaster ? Colors.red : Colors.orange;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withAlpha(50)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: color, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              isDisaster ? "DISASTER ALERT ACTIVE" : "WARNING ACTIVE",
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                letterSpacing: 1,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

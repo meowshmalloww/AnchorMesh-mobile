@@ -1,80 +1,16 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:geolocator/geolocator.dart'; // Added for location
 import '../services/packet_store.dart';
 import '../services/offline_map_service.dart';
 import '../services/ble_service.dart';
+import '../models/settings_enums.dart';
+import 'alerts_history_page.dart';
+import 'region_selection_page.dart';
 
-/// Battery saving modes for mesh operation
-enum BatteryMode {
-  /// SOS Active: Always on, max range (6-8 hrs)
-  sosActive(
-    'SOS Active',
-    'Always scanning, maximum reach',
-    0, // Always on
-    0, // No sleep
-    7, // ~6-8 hrs
-    'Max reaction time',
-  ),
-
-  /// Bridge Mode: 30s on, 30s off (12+ hrs)
-  bridge(
-    'Bridge Mode',
-    '30s on / 30s off, balanced',
-    30,
-    30,
-    12,
-    'Fast updates',
-  ),
-
-  /// Battery Saver: 1 min on, 1 min off (24+ hrs)
-  batterySaver(
-    'Battery Saver',
-    '1 min on / 1 min off, efficiency',
-    60,
-    60,
-    24,
-    'Power efficient',
-  ),
-
-  /// Custom: User-defined intervals
-  custom(
-    'Custom',
-    'Set your own intervals',
-    30, // Default
-    30, // Default
-    0, // Depends
-    'Customizable',
-  );
-
-  final String label;
-  final String description;
-  final int scanSeconds;
-  final int sleepSeconds;
-  final int estimatedBatteryHours;
-  final String reactionTime;
-
-  const BatteryMode(
-    this.label,
-    this.description,
-    this.scanSeconds,
-    this.sleepSeconds,
-    this.estimatedBatteryHours,
-    this.reactionTime,
-  );
-}
-
-/// BLE Version options
-enum BLEVersion {
-  legacy('BLE 4.x (Legacy)', 'Compatible with older devices'),
-  modern('BLE 5.x', 'Extended range, faster transfer');
-
-  final String label;
-  final String description;
-
-  const BLEVersion(this.label, this.description);
-}
+// Re-export for backward compatibility
+export '../models/settings_enums.dart';
 
 /// Settings page with battery modes and app configuration
 class SettingsPage extends StatefulWidget {
@@ -90,7 +26,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _autoActivateOnDisaster = true;
   bool _autoUploadOnInternet = true;
   bool _showNotifications = true;
-  String _userId = '';
+  // ignore: unused_field
+  String _userId = ''; // Set during _loadSettings, may be used later
   bool _supportsBle5 = true; // Default to true, will be checked on load
 
   // Custom mode settings
@@ -178,10 +115,17 @@ class _SettingsPageState extends State<SettingsPage> {
                   .map((version) => _buildBLEVersionOption(version)),
               if (!_supportsBle5)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   child: Text(
                     'BLE 5.x is not available on this device',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500], fontStyle: FontStyle.italic),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[500],
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 ),
             ],
@@ -230,91 +174,69 @@ class _SettingsPageState extends State<SettingsPage> {
 
           const SizedBox(height: 12),
 
-          // Device Info Section
+          const SizedBox(height: 12),
+
+          // Data & Storage Section (New)
           _buildSectionCard(
-            title: 'Device',
-            icon: Icons.phone_android,
-            iconColor: Colors.purple,
+            title: 'Data & Storage',
+            icon: Icons.storage,
+            iconColor: Colors.teal,
             children: [
               ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withAlpha(30),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.fingerprint,
-                    color: Colors.blue,
-                    size: 20,
-                  ),
+                leading: const Icon(Icons.history, color: Colors.teal),
+                title: const Text('Alert History'),
+                subtitle: const Text('View all past SOS signals'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AlertsHistoryPage()),
                 ),
-                title: const Text('Device ID'),
-                subtitle: Text(
-                  _userId,
-                  style: const TextStyle(fontFamily: 'monospace'),
+              ),
+
+              _buildStorageStats(),
+              const Divider(),
+              ListTile(
+                leading: const Icon(
+                  Icons.download_for_offline,
+                  color: Colors.blue,
                 ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.copy, size: 20),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: _userId));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Device ID copied')),
-                    );
-                  },
+                title: const Text('Download Offline Region'),
+                subtitle: const Text('Select area to save for offline use'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const RegionSelectionPage(),
+                  ),
                 ),
               ),
               ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withAlpha(30),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.delete_outline,
-                    color: Colors.red,
-                    size: 20,
-                  ),
-                ),
-                title: const Text('Clear local data'),
-                subtitle: const Text('Remove all cached SOS packets'),
-                onTap: _showClearDataDialog,
+                leading: const Icon(Icons.delete_outline, color: Colors.orange),
+                title: const Text('Clear Map Cache'),
+                onTap: _showClearMapDialog,
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_forever, color: Colors.red),
+                title: const Text('Clear SOS History'),
+                subtitle: const Text('Remove all cached packets'),
+                onTap: _showClearHistoryDialog,
               ),
             ],
           ),
 
           const SizedBox(height: 12),
 
-          // Packet Info Section
+          // Location Section (Moved from SOS)
           _buildSectionCard(
-            title: 'SOS Packet Info',
-            icon: Icons.info,
-            iconColor: Colors.teal,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '21-byte Packet Structure:',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildPacketRow('0-1', 'Header', '0xFFFF'),
-                    _buildPacketRow('2-5', 'User ID', '4B random'),
-                    _buildPacketRow('6-7', 'Sequence', '2B counter'),
-                    _buildPacketRow('8-11', 'Latitude', '4B ×10⁷'),
-                    _buildPacketRow('12-15', 'Longitude', '4B ×10⁷'),
-                    _buildPacketRow('16', 'Status', '1B code'),
-                    _buildPacketRow('17-20', 'Timestamp', '4B Unix'),
-                  ],
-                ),
-              ),
-            ],
+            title: 'Location Reference',
+            icon: Icons.location_on,
+            iconColor: Colors.red,
+            children: [_buildLocationTile()],
           ),
 
+          const SizedBox(height: 12),
+
+          // Packet Info Section
           const SizedBox(height: 12),
 
           // About Section
@@ -338,32 +260,6 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
 
           const SizedBox(height: 30),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPacketRow(String bytes, String field, String size) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 50,
-            child: Text(
-              bytes,
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.grey[600],
-                fontFamily: 'monospace',
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 80,
-            child: Text(field, style: const TextStyle(fontSize: 12)),
-          ),
-          Text(size, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
         ],
       ),
     );
@@ -640,14 +536,68 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  void _showClearDataDialog() {
+  Widget _buildStorageStats() {
+    return FutureBuilder<Map<String, int>>(
+      future: _getStorageSizes(),
+      builder: (context, snapshot) {
+        final sosSize = snapshot.data?['sos'] ?? 0;
+        final mapSize = snapshot.data?['map'] ?? 0;
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'SOS Data',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    Text(
+                      '${(sosSize / 1024).toStringAsFixed(1)} KB',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Map Tiles',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    Text(
+                      '${(mapSize / 1024 / 1024).toStringAsFixed(1)} MB',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<Map<String, int>> _getStorageSizes() async {
+    final sosSize = await PacketStore.instance.getStorageSize();
+    // Use placeholder for map stats for now until true implementation
+    final mapStats = await OfflineMapService.instance.getStorageStats();
+    final mapSize = mapStats['sizeBytes'] as int? ?? 0;
+    return {'sos': sosSize, 'map': mapSize};
+  }
+
+  void _showClearMapDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Clear Data?'),
-        content: const Text(
-          'This will remove all cached SOS packets and offline map data. Your device ID will remain.',
-        ),
+        title: const Text('Clear Map Cache?'),
+        content: const Text('This will delete all offline map tiles.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -655,17 +605,47 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           TextButton(
             onPressed: () async {
-              final navigator = Navigator.of(context);
-              final messenger = ScaffoldMessenger.of(context);
-
-              await PacketStore.instance.clearAllData();
+              final nav = Navigator.of(context);
+              final scaffold = ScaffoldMessenger.of(context);
               await OfflineMapService.instance.clearCache();
+              if (mounted) {
+                nav.pop();
+                setState(() {}); // refresh stats
+                scaffold.showSnackBar(
+                  const SnackBar(content: Text('Map cache cleared')),
+                );
+              }
+            },
+            child: const Text('Clear', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
 
-              if (!mounted) return;
-              navigator.pop();
-              messenger.showSnackBar(
-                const SnackBar(content: Text('Data cleared successfully')),
-              );
+  void _showClearHistoryDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear History?'),
+        content: const Text('This will delete all SOS packet history.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final nav = Navigator.of(context);
+              final scaffold = ScaffoldMessenger.of(context);
+              await PacketStore.instance.clearAllData();
+              if (mounted) {
+                nav.pop();
+                setState(() {}); // refresh stats
+                scaffold.showSnackBar(
+                  const SnackBar(content: Text('History cleared')),
+                );
+              }
             },
             child: const Text('Clear', style: TextStyle(color: Colors.red)),
           ),
@@ -718,5 +698,52 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
+  }
+
+  // Location Tile Logic
+  Widget _buildLocationTile() {
+    return ListTile(
+      leading: const Icon(Icons.my_location),
+      title: const Text('Current Location'),
+      subtitle: FutureBuilder<Position?>(
+        future: _getCurrentPosition(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Text('Fetching...');
+          }
+          if (snapshot.hasError) {
+            return const Text('Location unavailable');
+          }
+          if (snapshot.hasData) {
+            return Text(
+              '${snapshot.data!.latitude.toStringAsFixed(5)}, ${snapshot.data!.longitude.toStringAsFixed(5)}',
+            );
+          }
+          return const Text('Tap to refresh');
+        },
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.refresh),
+        onPressed: () {
+          setState(() {}); // Rebuild to refetch
+        },
+      ),
+    );
+  }
+
+  Future<Position?> _getCurrentPosition() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return null;
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return null;
+      }
+      if (permission == LocationPermission.deniedForever) return null;
+      return await Geolocator.getCurrentPosition();
+    } catch (_) {
+      return null;
+    }
   }
 }

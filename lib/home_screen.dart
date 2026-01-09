@@ -1,7 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'bottom_taskbar.dart';
+import 'widgets/resq_nav_bar.dart';
+import 'theme/resq_theme.dart';
 import 'pages/home_page.dart';
 import 'pages/map_page.dart';
 import 'pages/offline_utility_page.dart';
@@ -56,9 +57,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.resq;
+
     return Scaffold(
+      backgroundColor: colors.surface,
       body: IndexedStack(index: _selectedIndex, children: _pages),
-      bottomNavigationBar: CustomBottomBar(
+      bottomNavigationBar: ResQNavBar(
         selectedIndex: _selectedIndex,
         onItemSelected: _onItemTapped,
       ),
