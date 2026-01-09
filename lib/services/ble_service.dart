@@ -46,6 +46,9 @@ class BLEService {
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
+  // Event channel subscription (must be tracked for cleanup)
+  StreamSubscription? _eventChannelSubscription;
+
   // State
   BLEConnectionState _state = BLEConnectionState.idle;
   bool _isLowPowerMode = false;
@@ -121,14 +124,22 @@ class BLEService {
 
   /// Initialize the BLE service
   void _init() {
-    _eventChannel.receiveBroadcastStream().listen(
+    // Cancel existing subscription if any (handles reinit)
+    _eventChannelSubscription?.cancel();
+
+    // Subscribe to native BLE events
+    _eventChannelSubscription = _eventChannel.receiveBroadcastStream().listen(
       _handleNativeEvent,
       onError: (dynamic error) {
         _errorController.add(error.toString());
       },
+      onDone: () {
+        debugPrint('BLE event channel closed');
+      },
     );
 
     // Start cleanup timer (every 30 minutes)
+    _cleanupTimer?.cancel();
     _cleanupTimer = Timer.periodic(const Duration(minutes: 30), (_) {
       _packetStore.deleteExpiredPackets();
       _cleanupSeenPackets();
@@ -139,6 +150,21 @@ class BLEService {
 
     // Initialize notifications
     _initNotifications();
+  }
+
+  /// Reinitialize event channel after app resume (handles stale channel)
+  void reinitializeEventChannel() {
+    debugPrint('Reinitializing BLE event channel');
+    _eventChannelSubscription?.cancel();
+    _eventChannelSubscription = _eventChannel.receiveBroadcastStream().listen(
+      _handleNativeEvent,
+      onError: (dynamic error) {
+        _errorController.add(error.toString());
+      },
+      onDone: () {
+        debugPrint('BLE event channel closed');
+      },
+    );
   }
 
   Future<void> _initNotifications() async {
@@ -745,6 +771,8 @@ class BLEService {
 
   /// Dispose resources
   void dispose() {
+    _eventChannelSubscription?.cancel();
+    _eventChannelSubscription = null;
     _broadcastTimer?.cancel();
     _cleanupTimer?.cancel();
     _connectionStateController.close();

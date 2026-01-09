@@ -43,9 +43,10 @@ class ConnectivityChecker {
   /// Check if internet is actually reachable
   Future<bool> checkInternet() async {
     for (final target in pingTargets) {
+      HttpClient? client;
       try {
         final uri = Uri.parse(target);
-        final client = HttpClient();
+        client = HttpClient();
         client.connectionTimeout = pingTimeout;
 
         final request = await client.headUrl(uri);
@@ -57,6 +58,8 @@ class ConnectivityChecker {
         }
       } catch (_) {
         // Try next target
+      } finally {
+        client?.close();
       }
     }
 
@@ -181,12 +184,13 @@ class DisasterMonitor {
       return _cachedUSGSResult ?? false;
     }
 
+    HttpClient? client;
     try {
       developer.log(
         'USGS: Fetching earthquake data...',
         name: 'DisasterMonitor',
       );
-      final client = HttpClient();
+      client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 10);
 
       final request = await client.getUrl(Uri.parse(usgsApi));
@@ -230,6 +234,8 @@ class DisasterMonitor {
       }
     } catch (e) {
       developer.log('USGS: Error - $e', name: 'DisasterMonitor');
+    } finally {
+      client?.close();
     }
     return false;
   }
@@ -250,12 +256,13 @@ class DisasterMonitor {
       return _cachedNOAAResult;
     }
 
+    HttpClient? client;
     try {
       developer.log(
         'NOAA: Fetching weather alerts...',
         name: 'DisasterMonitor',
       );
-      final client = HttpClient();
+      client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 10);
 
       // Build URL - can filter by point if location provided
@@ -307,6 +314,8 @@ class DisasterMonitor {
       }
     } catch (e) {
       developer.log('NOAA: Error - $e', name: 'DisasterMonitor');
+    } finally {
+      client?.close();
     }
     return null;
   }

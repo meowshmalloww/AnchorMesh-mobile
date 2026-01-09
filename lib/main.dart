@@ -6,6 +6,7 @@ import 'theme/resq_theme.dart';
 import 'services/platform_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/supabase_service.dart';
+import 'services/ble_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -73,9 +74,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // App came to foreground - check low power mode
+      // App came to foreground - reinitialize BLE event channel and check low power mode
+      BLEService.instance.reinitializeEventChannel();
       _checkLowPowerMode();
+    } else if (state == AppLifecycleState.detached) {
+      // App is being terminated - cleanup all services
+      _disposeAllServices();
     }
+  }
+
+  /// Dispose all global services when app terminates
+  void _disposeAllServices() {
+    debugPrint('Disposing all services...');
+    ConnectivityChecker.instance.dispose();
+    DisasterMonitor.instance.dispose();
+    SupabaseService.instance.dispose();
+    PlatformService.instance.dispose();
+    BLEService.instance.dispose();
   }
 
   Future<void> _checkLowPowerMode() async {

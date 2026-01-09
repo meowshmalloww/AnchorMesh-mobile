@@ -43,8 +43,10 @@ class BLEManager: NSObject {
     
     private var isScanning = false
     private var isBroadcasting = false
-    
+
     private var lowPowerModeObserver: NSObjectProtocol?
+    private var isSetup = false
+    private var lifecycleObserversSetup = false
     
     // MARK: - Singleton
     
@@ -57,6 +59,10 @@ class BLEManager: NSObject {
     }
 
     private func setupAppLifecycleObserver() {
+        // Prevent duplicate observers
+        guard !lifecycleObserversSetup else { return }
+        lifecycleObserversSetup = true
+
         // Listen for app entering background
         NotificationCenter.default.addObserver(
             self,
@@ -92,6 +98,13 @@ class BLEManager: NSObject {
     // MARK: - Setup
 
     func setup() {
+        // Prevent double initialization
+        guard !isSetup else {
+            print("BLEManager already setup, skipping")
+            return
+        }
+        isSetup = true
+
         // Initialize managers with state restoration
         centralManager = CBCentralManager(
             delegate: self,
@@ -113,8 +126,31 @@ class BLEManager: NSObject {
         // Request notification permission for SOS alerts
         requestNotificationPermission()
     }
+
+    /// Reset manager state for new Flutter engine connection (app relaunch)
+    func reset() {
+        print("BLEManager reset for new app session")
+
+        // Clear stale event sink
+        eventSink = nil
+
+        // Reset setup flag to allow re-initialization
+        isSetup = false
+
+        // Clear stale peripheral references
+        discoveredPeripherals.removeAll()
+        connectedPeripherals.removeAll()
+        scannedUUIDs.removeAll()
+
+        // Reset BLE operation flags
+        isScanning = false
+        isBroadcasting = false
+    }
     
     private func setupLowPowerModeObserver() {
+        // Prevent duplicate observers
+        guard lowPowerModeObserver == nil else { return }
+
         lowPowerModeObserver = NotificationCenter.default.addObserver(
             forName: Notification.Name.NSProcessInfoPowerStateDidChange,
             object: nil,
@@ -246,7 +282,13 @@ class BLEManager: NSObject {
     }
     
     private func sendEvent(type: String, data: Any?) {
-        eventSink?(["type": type, "data": data as Any])
+        // Safety: Check if sink is still valid before sending
+        guard let sink = eventSink else { return }
+
+        // Dispatch on main thread to avoid threading issues
+        DispatchQueue.main.async {
+            sink(["type": type, "data": data as Any])
+        }
     }
     
     private func updateState(_ state: String) {
@@ -508,7 +550,15 @@ extension BLEManager: CBCentralManagerDelegate {
     // State restoration
     func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
         if let peripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] {
-            discoveredPeripherals = peripherals
+            // Only restore peripherals that are in valid state (not disconnected)
+            discoveredPeripherals = peripherals.filter { $0.state != .disconnected }
+
+            // Re-set delegate for restored peripherals
+            for peripheral in discoveredPeripherals {
+                peripheral.delegate = self
+            }
+
+            print("BLE state restored with \(discoveredPeripherals.count) valid peripherals")
         }
     }
 }

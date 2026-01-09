@@ -14,6 +14,10 @@ import BackgroundTasks
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
+        // Reset state for fresh app launch (handles reopen after force quit)
+        isChannelsSetup = false
+        BLEManager.shared.reset()
+
         GeneratedPluginRegistrant.register(with: self)
 
         // Register background tasks safely
@@ -30,9 +34,6 @@ import BackgroundTasks
 
         // Schedule background refresh
         BackgroundTaskManager.shared.scheduleRefresh()
-        
-        // Observe Low Power Mode changes
-        setupLowPowerModeObserver()
 
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }
