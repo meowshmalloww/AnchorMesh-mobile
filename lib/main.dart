@@ -7,6 +7,7 @@ import 'services/platform_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/supabase_service.dart';
 import 'services/ble_service.dart';
+import 'services/packet_store.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -74,13 +75,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // App came to foreground - reinitialize BLE event channel and check low power mode
-      BLEService.instance.reinitializeEventChannel();
+      // App came to foreground - reset services that may have stale state from iOS force quit
+      _resetServicesOnResume();
       _checkLowPowerMode();
     } else if (state == AppLifecycleState.detached) {
       // App is being terminated - cleanup all services
       _disposeAllServices();
     }
+  }
+
+  /// Reset services on app resume (handles iOS force quit recovery)
+  /// On iOS, Dart VM can persist across force quits, leaving stale database/timer state
+  Future<void> _resetServicesOnResume() async {
+    // Reset stale database connections
+    await PacketStore.reset();
+    // Reinitialize BLE event channel
+    BLEService.instance.reinitializeEventChannel();
   }
 
   /// Dispose all global services when app terminates

@@ -80,10 +80,19 @@ import BackgroundTasks
     }
     
     private func handlePlatformMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        // Wrap in error handling to prevent crashes
+        do {
+            try handlePlatformMethodCallUnsafe(call: call, result: result)
+        } catch {
+            result(FlutterError(code: "NATIVE_ERROR", message: error.localizedDescription, details: nil))
+        }
+    }
+
+    private func handlePlatformMethodCallUnsafe(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
         switch call.method {
         case "isLowPowerModeEnabled":
             result(ProcessInfo.processInfo.isLowPowerModeEnabled)
-            
+
         case "setScreenAlwaysOn":
             guard let args = call.arguments as? [String: Any],
                   let enabled = args["enabled"] as? Bool else {
@@ -178,6 +187,15 @@ import BackgroundTasks
     }
     
     private func handleBLEMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        // Wrap in error handling to prevent crashes from unexpected exceptions
+        do {
+            try handleBLEMethodCallUnsafe(call: call, result: result)
+        } catch {
+            result(FlutterError(code: "NATIVE_ERROR", message: error.localizedDescription, details: nil))
+        }
+    }
+
+    private func handleBLEMethodCallUnsafe(call: FlutterMethodCall, result: @escaping FlutterResult) throws {
         switch call.method {
         case "startBroadcasting":
             guard let args = call.arguments as? [String: Any],
@@ -187,16 +205,16 @@ import BackgroundTasks
             }
             let data = Data(packetBytes)
             result(BLEManager.shared.startBroadcasting(packetData: data))
-            
+
         case "stopBroadcasting":
             result(BLEManager.shared.stopBroadcasting())
-            
+
         case "startScanning":
             result(BLEManager.shared.startScanning())
-            
+
         case "stopScanning":
             result(BLEManager.shared.stopScanning())
-            
+
         case "checkInternet":
             DispatchQueue.global().async {
                 let hasInternet = BLEManager.shared.checkInternet()
@@ -204,14 +222,14 @@ import BackgroundTasks
                     result(hasInternet)
                 }
             }
-            
+
         case "getDeviceUuid":
             result(BLEManager.shared.getDeviceUUID())
-            
+
         case "supportsBle5":
             // iPhone 8 and later support BLE 5
             result(true)
-            
+
         case "requestBatteryExemption":
             // iOS doesn't support this, always return true
             result(true)

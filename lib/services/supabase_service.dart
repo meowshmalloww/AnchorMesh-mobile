@@ -86,6 +86,10 @@ class SupabaseService {
 
   /// Initialize Supabase client and start sync monitoring
   Future<void> initialize() async {
+    // Cancel any existing timers/subscriptions from previous app session (iOS force quit recovery)
+    _syncTimer?.cancel();
+    _connectivitySub?.cancel();
+
     if (_isInitialized) return;
 
     try {

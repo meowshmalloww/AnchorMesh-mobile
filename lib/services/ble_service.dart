@@ -25,6 +25,12 @@ class BLEService {
     return _instance!;
   }
 
+  /// Reset singleton instance for app restart (iOS force quit recovery)
+  static void resetInstance() {
+    _instance?.dispose();
+    _instance = null;
+  }
+
   BLEService._() {
     _init();
   }
@@ -321,7 +327,9 @@ class BLEService {
       // Check if we've already seen this exact packet
       if (_seenPacketIds.contains(packetId)) {
         // Still count as verification if from different source
-        _addVerification(packet.userId, _userId!);
+        if (_userId != null) {
+          _addVerification(packet.userId, _userId!);
+        }
         return;
       }
       _seenPacketIds.add(packetId);
@@ -352,7 +360,9 @@ class BLEService {
         _handshakeController.add(_handshakeCount);
 
         // Add verification (we received it, so we confirm it)
-        _addVerification(packet.userId, _userId!);
+        if (_userId != null) {
+          _addVerification(packet.userId, _userId!);
+        }
 
         // Show Notification
         if (packet.targetId == 0 || packet.targetId == _userId) {
@@ -628,7 +638,8 @@ class BLEService {
 
     // If we were broadcasting SOS, send SAFE to stop propagation
     if (_currentBroadcast != null &&
-        _currentBroadcast!.status != SOSStatus.safe) {
+        _currentBroadcast!.status != SOSStatus.safe &&
+        _userId != null) {
       _sequence = await _packetStore.incrementSequence();
       final safePacket = SOSPacket.create(
         userId: _userId!,
@@ -752,8 +763,11 @@ class BLEService {
 
   /// Get user ID
   Future<int> getUserId() async {
-    if (_userId == null) await _loadUserData();
-    return _userId!;
+    if (_userId == null) {
+      await _loadUserData();
+    }
+    // _loadUserData always sets _userId, but add fallback for safety
+    return _userId ?? await _packetStore.getUserId();
   }
 
   /// Get all active SOS packets from local storage

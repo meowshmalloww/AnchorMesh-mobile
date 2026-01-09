@@ -10,6 +10,7 @@ import '../models/sos_status.dart';
 class PacketStore {
   static PacketStore? _instance;
   static Database? _database;
+  static Completer<Database>? _initCompleter;
 
   PacketStore._();
 
@@ -18,11 +19,50 @@ class PacketStore {
     return _instance!;
   }
 
-  /// Get database instance
+  /// Reset database connection for app restart (iOS force quit recovery)
+  /// This clears stale database handles that persist across Dart VM restarts on iOS
+  static Future<void> reset() async {
+    // Wait for any pending initialization to complete first
+    if (_initCompleter != null && !_initCompleter!.isCompleted) {
+      try {
+        await _initCompleter!.future;
+      } catch (_) {
+        // Ignore - we're resetting anyway
+      }
+    }
+    _initCompleter = null;
+
+    if (_database != null) {
+      try {
+        await _database!.close();
+      } catch (_) {
+        // Ignore close errors - database may already be closed/invalid
+      }
+      _database = null;
+    }
+  }
+
+  /// Get database instance (thread-safe with lock)
   Future<Database> get database async {
+    // Fast path: already initialized
     if (_database != null) return _database!;
-    _database = await _initDatabase();
-    return _database!;
+
+    // Check if initialization is in progress
+    if (_initCompleter != null) {
+      return _initCompleter!.future;
+    }
+
+    // Start initialization with lock
+    _initCompleter = Completer<Database>();
+    try {
+      _database = await _initDatabase();
+      _initCompleter!.complete(_database!);
+      return _database!;
+    } catch (e) {
+      _initCompleter!.completeError(e);
+      _initCompleter = null;
+      rethrow;
+    }
   }
 
   /// Initialize database
@@ -217,10 +257,16 @@ class PacketStore {
 
   /// Mark packets as synced
   Future<void> markSynced(List<int> packetIds) async {
+    if (packetIds.isEmpty) return;
     final db = await database;
-    await db.update('packets', {
-      'isSynced': 1,
-    }, where: 'id IN (${packetIds.join(',')})');
+    // Use parameterized query to prevent SQL injection
+    final placeholders = List.filled(packetIds.length, '?').join(',');
+    await db.update(
+      'packets',
+      {'isSynced': 1},
+      where: 'id IN ($placeholders)',
+      whereArgs: packetIds,
+    );
   }
 
   /// Delete old packets (cleanup)
