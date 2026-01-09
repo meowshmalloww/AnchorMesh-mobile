@@ -312,11 +312,10 @@ class PacketStore {
 
     // Generate new user ID
     final userId = SOSPacket.generateUserId();
-    await db.insert(
-      'user_settings',
-      {'key': 'userId', 'value': userId.toString()},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('user_settings', {
+      'key': 'userId',
+      'value': userId.toString(),
+    });
     return userId;
   }
 

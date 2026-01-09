@@ -1,7 +1,6 @@
 import Flutter
 import UIKit
 import BackgroundTasks
-import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -31,24 +30,11 @@ import UserNotifications
 
         // Schedule background refresh
         BackgroundTaskManager.shared.scheduleRefresh()
-
+        
         // Observe Low Power Mode changes
         setupLowPowerModeObserver()
 
-        // Request notification authorization for SOS alerts
-        requestNotificationAuthorization()
-
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-    }
-
-    private func requestNotificationAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if let error = error {
-                print("AppDelegate: Notification authorization error: \(error)")
-            } else {
-                print("AppDelegate: Notification authorization granted: \(granted)")
-            }
-        }
     }
     
     private func setupLowPowerModeObserver() {
@@ -78,14 +64,7 @@ import UserNotifications
 
         setupBLEChannels(controller: controller)
         setupPlatformChannel(controller: controller)
-        setupLiquidGlassChannels(controller: controller)
         isChannelsSetup = true
-    }
-
-    private func setupLiquidGlassChannels(controller: FlutterViewController) {
-        // Setup Liquid Glass handler for iOS 26 native theming
-        LiquidGlassHandler.shared.setup(binaryMessenger: controller.binaryMessenger)
-        print("AppDelegate: Liquid Glass channels setup complete")
     }
     
     private func setupPlatformChannel(controller: FlutterViewController) {
@@ -161,22 +140,6 @@ import UserNotifications
                 result(nil)
             }
             
-        case "applyLiquidGlass":
-            guard let args = call.arguments as? [String: Any] else {
-                result(FlutterError(code: "INVALID_ARGS", message: "Missing arguments", details: nil))
-                return
-            }
-            let elementId = args["elementId"] as? String ?? "unknown"
-            let intensity = args["intensity"] as? Double ?? 0.8
-            
-            // Adopting iOS 26 Liquid Glass material (Mock implementation for iOS 26 APIs)
-            // In a real iOS 26 environment, we would use:
-            // UIView.appearance().material = .liquidGlass(intensity: intensity)
-            print("Applying Liquid Glass to \(elementId) with intensity \(intensity)")
-            
-            // For now, we simulate success
-            result(true)
-            
         case "requestIgnoreBatteryOptimization":
             // iOS doesn't support this
             result(true)
@@ -240,14 +203,6 @@ import UserNotifications
                     result(hasInternet)
                 }
             }
-
-        case "checkWifiStatus":
-            DispatchQueue.global().async {
-                let isWifiOn = BLEManager.shared.checkWifiStatus()
-                DispatchQueue.main.async {
-                    result(isWifiOn)
-                }
-            }
             
         case "getDeviceUuid":
             result(BLEManager.shared.getDeviceUUID())
@@ -260,21 +215,15 @@ import UserNotifications
             // iOS doesn't support this, always return true
             result(true)
 
-        case "startBackgroundMonitoring":
-            result(BLEManager.shared.enableBackgroundMonitoring())
+        case "checkWifiStatus":
+            // Check if WiFi is enabled - iOS doesn't expose this easily without NetworkExtension
+            // Return false to indicate we can't determine WiFi interference
+            result(false)
 
-        case "stopBackgroundMonitoring":
-            result(BLEManager.shared.disableBackgroundMonitoring())
-
-        case "hasNotificationPermission":
-            BLEManager.shared.hasNotificationPermission { granted in
-                result(granted)
-            }
-
-        case "requestNotificationPermission":
-            BLEManager.shared.requestNotificationPermission { granted in
-                result(granted)
-            }
+        case "testNotification":
+            // Test notification by simulating an SOS packet
+            BLEManager.shared.testNotification()
+            result(true)
 
         default:
             result(FlutterMethodNotImplemented)

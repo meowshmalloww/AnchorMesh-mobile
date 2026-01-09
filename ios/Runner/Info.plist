@@ -37,14 +37,14 @@
 	<string>This app broadcasts emergency SOS signals via Bluetooth to nearby devices.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>The flashlight is used for SOS signaling. Camera access is not used for capturing images.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>This app uses the microphone to detect ultrasonic SOS signals from nearby devices.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>This app uses motion sensors to determine compass heading for navigation.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
-	<string>This app needs access to location when open to display your current coordinates for SOS purposes.</string>
+	<string>This app needs continuous location access to broadcast your coordinates in SOS signals, even when the app is in the background.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs continuous location access to broadcast your coordinates in SOS signals, even when the app is in the background. This helps rescuers find you during emergencies.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>This app needs access to location when open to display your current coordinates for SOS purposes.</string>
+	<string>This app needs access to location to display your current coordinates for SOS purposes.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -53,6 +53,8 @@
 		<string>bluetooth-peripheral</string>
 		<string>fetch</string>
 		<string>processing</string>
+		<string>remote-notification</string>
+		<string>location</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

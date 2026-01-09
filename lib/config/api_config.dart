@@ -10,11 +10,11 @@ class ApiConfig {
   /// MapTiler API Key (DISABLED by default to save quota)
   /// Set useMapTiler = true to enable
   /// Current Quota: ~3000 requests remaining
-  static const String mapTilerApiKey = 'nrWM0WzSZUZacCx4JOVU';
+  static const String mapTilerApiKey = '';
 
   /// IMPORTANT: Set to false to use free OSM tiles
   /// Each map view = 15-30 tile requests! Set to true only for demos
-  static const bool useMapTiler = false; // TEMPORARILY DISABLED BY AGENT
+  static const bool useMapTiler = false;
 
   /// MapTiler tile URL (streets style)
   static String get mapTilerStreetsUrl =>
