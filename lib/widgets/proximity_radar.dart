@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_compass/flutter_compass.dart';
@@ -33,6 +34,7 @@ class _ProximityRadarState extends State<ProximityRadar>
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
+  StreamSubscription<CompassEvent>? _compassSubscription;
 
   @override
   void initState() {
@@ -58,9 +60,12 @@ class _ProximityRadarState extends State<ProximityRadar>
       _directionFinder.clear();
     });
 
+    // Cancel any existing subscription
+    _compassSubscription?.cancel();
+
     // Listen to compass heading
-    FlutterCompass.events?.listen((event) {
-      if (!_isScanning || event.heading == null) return;
+    _compassSubscription = FlutterCompass.events?.listen((event) {
+      if (!_isScanning || !mounted || event.heading == null) return;
 
       setState(() => _currentHeading = event.heading!);
 
@@ -92,6 +97,7 @@ class _ProximityRadarState extends State<ProximityRadar>
 
   @override
   void dispose() {
+    _compassSubscription?.cancel();
     _pulseController.dispose();
     super.dispose();
   }

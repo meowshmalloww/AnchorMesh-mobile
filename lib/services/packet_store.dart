@@ -27,7 +27,22 @@ class PacketStore {
   /// Initialize database
   Future<Database> _initDatabase() async {
     final path = join(await getDatabasesPath(), 'sos_packets.db');
-    return openDatabase(path, version: 1, onCreate: _onCreate);
+    return openDatabase(
+      path,
+      version: 2,
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
+    );
+  }
+
+  /// Handle database upgrades
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Version 2: Add targetId for direct messaging
+      await db.execute(
+        'ALTER TABLE packets ADD COLUMN targetId INTEGER DEFAULT 0',
+      );
+    }
   }
 
   /// Create tables
@@ -44,6 +59,7 @@ class PacketStore {
         timestamp INTEGER NOT NULL,
         rssi INTEGER,
         isSynced INTEGER DEFAULT 0,
+        targetId INTEGER DEFAULT 0,
         receivedAt INTEGER NOT NULL,
         UNIQUE(userId, sequence)
       )
@@ -296,10 +312,11 @@ class PacketStore {
 
     // Generate new user ID
     final userId = SOSPacket.generateUserId();
-    await db.insert('user_settings', {
-      'key': 'userId',
-      'value': userId.toString(),
-    });
+    await db.insert(
+      'user_settings',
+      {'key': 'userId', 'value': userId.toString()},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
     return userId;
   }
 

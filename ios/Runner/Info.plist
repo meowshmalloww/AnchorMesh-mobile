@@ -4,15 +4,15 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.project_flutter.mesh.refresh</string>
-		<string>com.project_flutter.mesh.processing</string>
+		<string>com.development.heyblue.mesh.refresh</string>
+		<string>com.development.heyblue.mesh.processing</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Project Flutter</string>
+	<string>Hey Blue</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -36,7 +36,11 @@
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>This app broadcasts emergency SOS signals via Bluetooth to nearby devices.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>This app needs access to the flashlight for SOS strobe functionality.</string>
+	<string>The flashlight is used for SOS signaling. Camera access is not used for capturing images.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app uses the microphone to detect ultrasonic SOS signals from nearby devices.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>This app uses motion sensors to determine compass heading for navigation.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>This app needs access to location when open to display your current coordinates for SOS purposes.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

@@ -97,21 +97,22 @@ class _MapPageState extends State<MapPage> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: const LatLng(37.7749, -122.4194), // Default: SF
-              initialZoom: _currentZoom,
-              minZoom: 3,
-              maxZoom: 18,
+              initialCenter: const LatLng(37.7749, -122.4194),
+              initialZoom: ApiConfig.defaultMapZoom,
+              minZoom: ApiConfig.minMapZoom,
+              maxZoom: ApiConfig.maxMapZoom,
               onPositionChanged: (position, hasGesture) {
                 setState(() => _currentZoom = position.zoom);
               },
             ),
             children: [
-              // Tile layer (OSM or MapTiler)
+              // Tile layer (OSM by default - FREE, MapTiler optional)
               TileLayer(
                 urlTemplate: ApiConfig.hasMapTiler
                     ? ApiConfig.mapTilerStreetsUrl
                     : ApiConfig.osmTileUrl,
-                userAgentPackageName: 'com.example.project_flutter',
+                userAgentPackageName: 'com.development.heyblue',
+                maxZoom: ApiConfig.maxMapZoom,
               ),
               // Markers layer
               MarkerLayer(markers: _buildMarkers()),
@@ -120,33 +121,9 @@ class _MapPageState extends State<MapPage> {
                 CircleLayer(circles: _buildHeatmapCircles()),
             ],
           ),
-          // Legend
-          Positioned(bottom: 16, left: 16, child: _buildLegend()),
-          // Zoom indicator
-          Positioned(
-            top: 16,
-            right: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                _getViewModeName(),
-                style: const TextStyle(color: Colors.white, fontSize: 11),
-              ),
-            ),
-          ),
         ],
       ),
     );
-  }
-
-  String _getViewModeName() {
-    if (_currentZoom < cityViewZoom) return '🏙️ City View';
-    if (_currentZoom < streetViewZoom) return '🛣️ Street View';
-    return '📍 Close Up';
   }
 
   List<Marker> _buildMarkers() {
@@ -174,11 +151,7 @@ class _MapPageState extends State<MapPage> {
                     BoxShadow(color: color.withAlpha(100), blurRadius: 8),
                   ],
                 ),
-                child: Icon(
-                  packet.status.icon,
-                  color: Colors.white,
-                  size: 16,
-                ),
+                child: Icon(packet.status.icon, color: Colors.white, size: 16),
               ),
               Container(width: 2, height: 10, color: color),
             ],
@@ -243,48 +216,6 @@ class _MapPageState extends State<MapPage> {
     }).toList();
   }
 
-  Widget _buildLegend() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white.withAlpha(220),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Legend',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
-          ),
-          const SizedBox(height: 6),
-          ...SOSStatus.values.where((s) => s != SOSStatus.safe).map((status) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: Color(status.colorValue),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(status.label, style: const TextStyle(fontSize: 10)),
-                ],
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
   void _showPacketDetails(SOSPacket packet) {
     final color = Color(packet.status.colorValue);
     final ageMinutes = packet.ageSeconds ~/ 60;
@@ -314,11 +245,7 @@ class _MapPageState extends State<MapPage> {
               width: 60,
               height: 60,
               decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              child: Icon(
-                packet.status.icon,
-                color: Colors.white,
-                size: 30,
-              ),
+              child: Icon(packet.status.icon, color: Colors.white, size: 30),
             ),
             const SizedBox(height: 16),
             Text(

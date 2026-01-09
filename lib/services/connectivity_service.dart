@@ -141,12 +141,12 @@ class DisasterMonitor {
   bool? _cachedUSGSResult;
   Map<String, dynamic>? _cachedNOAAResult;
 
-  // Rate limits (minimum time between API calls)
-  static const Duration usgsMinInterval = Duration(minutes: 15);
-  static const Duration noaaMinInterval = Duration(minutes: 30);
+  // Rate limits (minimum time between API calls) - STRICT to conserve quota
+  static const Duration usgsMinInterval = Duration(minutes: 60);
+  static const Duration noaaMinInterval = Duration(minutes: 60);
 
   // Check interval (how often to check in background)
-  static const Duration backgroundCheckInterval = Duration(minutes: 30);
+  static const Duration backgroundCheckInterval = Duration(minutes: 60);
 
   final _levelController = StreamController<AlertLevel>.broadcast();
 
@@ -155,6 +155,10 @@ class DisasterMonitor {
 
   /// Current alert level
   AlertLevel get currentLevel => _currentLevel;
+
+  /// Public getters for cached results (for UI display)
+  bool? get cachedUSGSResult => _cachedUSGSResult;
+  Map<String, dynamic>? get cachedNOAAResult => _cachedNOAAResult;
 
   /// USGS Earthquake API endpoint (free, no key needed)
   /// Limit: Reasonable use (every 15 min is fine)

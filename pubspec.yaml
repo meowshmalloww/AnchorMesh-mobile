@@ -37,12 +37,16 @@ dependencies:
 
   geolocator: ^13.0.0
   flutter_compass: ^0.8.1
-  camera: ^0.11.0
+  torch_light: ^1.0.0
   sqflite: ^2.4.2
   path: ^1.9.1
   flutter_map: ^8.2.2
   latlong2: ^0.9.1
   shared_preferences: ^2.5.4
+  vibration: ^3.1.5
+  just_audio: ^0.10.5
+  permission_handler: ^11.3.1
+  flutter_audio_capture: ^1.1.6
 
 dev_dependencies:
   flutter_test:

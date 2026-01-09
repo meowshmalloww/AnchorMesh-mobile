@@ -1,6 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'bottom_taskbar.dart';
-import 'pages/home_page.dart';
 import 'pages/map_page.dart';
 import 'pages/offline_utility_page.dart';
 import 'pages/sos_page.dart';
@@ -16,19 +17,40 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
-  final List<Widget> _pages = [
-    const HomePage(),
-    const MapPage(),
-    const OfflineUtilityPage(),
-    const SOSPage(),
-    const SettingsPage(),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _requestPermissions();
+  }
+
+  Future<void> _requestPermissions() async {
+    // Request Bluetooth permissions
+    if (Platform.isAndroid) {
+      // Android 12+ requires these specific Bluetooth permissions
+      await [
+        Permission.bluetoothScan,
+        Permission.bluetoothAdvertise,
+        Permission.bluetoothConnect,
+        Permission.location,
+      ].request();
+    } else if (Platform.isIOS) {
+      // iOS uses a single Bluetooth permission
+      await Permission.bluetooth.request();
+    }
+  }
 
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
     });
   }
+
+  List<Widget> get _pages => [
+    const SOSPage(),
+    const MapPage(),
+    const OfflineUtilityPage(),
+    const SettingsPage(),
+  ];
 
   @override
   Widget build(BuildContext context) {
