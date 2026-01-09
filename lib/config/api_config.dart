@@ -4,6 +4,20 @@ library;
 
 class ApiConfig {
   // ========================================
+  // ☁️ SUPABASE (Cloud Sync)
+  // ========================================
+
+  /// Supabase Project URL
+  static const String supabaseUrl = 'https://iiompuquacigtguvizfa.supabase.co';
+
+  /// Supabase Anonymous Key (safe to expose - RLS protects data)
+  static const String supabaseAnonKey =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlpb21wdXF1YWNpZ3RndXZpemZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4NDMwMTMsImV4cCI6MjA4MzQxOTAxM30.Ml2JbvYVmMDur1lr5gT81Uathm5VwUEQFWhuZExsdoo';
+
+  /// How often to attempt cloud sync (seconds)
+  static const int syncIntervalSeconds = 300; // 5 minutes
+
+  // ========================================
   // 🗺️ MAP TILES
   // ========================================
 

@@ -11,7 +11,6 @@ import '../services/connectivity_service.dart';
 import '../theme/resq_theme.dart';
 import '../painters/mesh_background_painter.dart';
 import '../utils/rssi_calculator.dart';
-import '../services/blackout_service.dart';
 // import '../services/connectivity_service.dart'; // Already imported above if needed, check lines 1-10
 
 class SOSPage extends StatefulWidget {
@@ -69,9 +68,6 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     _setupAnimation();
     _setupListeners();
     _loadActivePackets();
-
-    // Listen for Blackout Mode to optimize battery
-    BlackoutService.instance.enabled.addListener(_handleBlackoutChange);
 
     // Initial WiFi check
     _checkWifiStatus();
@@ -220,24 +216,9 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     _echoSubscription?.cancel();
     _handshakeSubscription?.cancel();
     _verificationSubscription?.cancel();
-    _verificationSubscription?.cancel();
-    BlackoutService.instance.enabled.removeListener(_handleBlackoutChange);
     _locationSub?.cancel();
     _wifiCheckTimer?.cancel();
     super.dispose();
-  }
-
-  void _handleBlackoutChange() {
-    if (BlackoutService.instance.enabled.value) {
-      if (_pulseController.isAnimating) {
-        _pulseController.stop();
-      }
-    } else {
-      // Resume if broadcasting
-      if (_isBroadcasting && !_pulseController.isAnimating) {
-        _pulseController.repeat(reverse: true);
-      }
-    }
   }
 
   void _startLocationTracking() {
@@ -350,77 +331,8 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
                 lineColor: colors.meshLine,
                 glowColor: colors.meshGlow,
               ),
-<<<<<<< HEAD
             ),
           ),
-=======
-              child: Text(
-                _alertLevel.label.toUpperCase(),
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          // BLE status
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Icon(
-              Icons.bluetooth,
-              color: _bleState == BLEConnectionState.meshActive
-                  ? Colors.blue
-                  : Colors.grey,
-              size: 20,
-            ),
-          ),
-          // Test notification button
-          IconButton(
-            icon: const Icon(Icons.notifications_active, size: 20),
-            tooltip: 'Test Notification',
-            onPressed: () async {
-              final success = await _bleService.testNotification();
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(success
-                        ? 'Test notification sent!'
-                        : 'Failed to send test notification'),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
-              }
-            },
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Low power warning
-            if (_isLowPowerMode)
-              Container(
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withAlpha(40),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.battery_alert, color: Colors.orange, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Low Power Mode ON. Disable for reliable mesh.',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
->>>>>>> 1f347633101d9ef9f9eacb964031c2166999fcd9
 
           SafeArea(
             child: Column(
@@ -473,49 +385,6 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
                       children: [
                         // Status Selector
                         _buildStatusSelector(colors, isDark),
-
-                        const SizedBox(height: 20),
-
-                        // Blackout Mode Trigger
-                        GestureDetector(
-                          onTap: () {
-                            HapticFeedback.mediumImpact();
-                            BlackoutService.instance.enable();
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: colors.surfaceElevated,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: colors.meshLine.withAlpha(50),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.dark_mode,
-                                  size: 16,
-                                  color: colors.textSecondary,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  "BLACKOUT MODE",
-                                  style: TextStyle(
-                                    color: colors.textSecondary,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 1,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
 
                         const SizedBox(height: 20),
 

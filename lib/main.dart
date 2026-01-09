@@ -5,9 +5,8 @@ import 'theme_notifier.dart';
 import 'theme/resq_theme.dart';
 import 'services/platform_service.dart';
 import 'services/connectivity_service.dart';
-import 'widgets/blackout_overlay.dart';
-
-void main() {
+import 'services/supabase_service.dart';
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Handle Flutter errors gracefully
@@ -21,6 +20,14 @@ void main() {
   // Start connectivity and disaster monitoring
   ConnectivityChecker.instance.startMonitoring();
   DisasterMonitor.instance.startMonitoring();
+
+  // Initialize Supabase for cloud sync
+  try {
+    await SupabaseService.instance.initialize();
+  } catch (e) {
+    // Supabase init failure is non-fatal - app works offline
+    debugPrint('Supabase initialization failed: $e');
+  }
 
   // Start auto-activate monitoring (activates mesh on 3 failed pings)
   PlatformService.instance.startAutoActivateMonitoring();
@@ -173,11 +180,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             extensions: const [ResQColors.dark],
           ),
           home: const HomeScreen(),
-          builder: (context, child) {
-            return Stack(
-              children: [if (child != null) child, const BlackoutOverlay()],
-            );
-          },
         );
       },
     );
