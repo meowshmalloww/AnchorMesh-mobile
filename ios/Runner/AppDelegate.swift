@@ -214,7 +214,17 @@ import BackgroundTasks
         case "requestBatteryExemption":
             // iOS doesn't support this, always return true
             result(true)
-            
+
+        case "checkWifiStatus":
+            // Check if WiFi is enabled - iOS doesn't expose this easily without NetworkExtension
+            // Return false to indicate we can't determine WiFi interference
+            result(false)
+
+        case "testNotification":
+            // Test notification by simulating an SOS packet
+            BLEManager.shared.testNotification()
+            result(true)
+
         default:
             result(FlutterMethodNotImplemented)
         }

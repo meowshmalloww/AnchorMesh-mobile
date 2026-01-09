@@ -56,6 +56,11 @@ class MainActivity : FlutterActivity() {
                     "checkWifiStatus" -> {
                         result.success(bleManager.checkWifiStatus())
                     }
+                    "testNotification" -> {
+                        // Simulate receiving an SOS packet for testing notifications
+                        bleManager.testNotification()
+                        result.success(true)
+                    }
                     else -> {
                         result.notImplemented()
                     }

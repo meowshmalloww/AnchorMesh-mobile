@@ -20,7 +20,11 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Wake lock for background tasks -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    
+    <!-- Notification permission for Android 13+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Vibration permission -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <application
         android:label="project_flutter"
         android:name="${applicationName}"

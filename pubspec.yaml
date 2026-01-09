@@ -47,10 +47,14 @@ dependencies:
   just_audio: ^0.10.5
   path_provider: ^2.1.2
   permission_handler: ^11.3.1
+<<<<<<< HEAD
   flutter_local_notifications: ^17.2.2
   screen_brightness: ^2.1.7
   record: ^6.0.0
   fftea: ^1.5.0+1
+=======
+  flutter_local_notifications: ^18.0.1
+>>>>>>> 1f347633101d9ef9f9eacb964031c2166999fcd9
 
 dev_dependencies:
   flutter_test:

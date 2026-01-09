@@ -350,8 +350,77 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
                 lineColor: colors.meshLine,
                 glowColor: colors.meshGlow,
               ),
+<<<<<<< HEAD
             ),
           ),
+=======
+              child: Text(
+                _alertLevel.label.toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          // BLE status
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Icon(
+              Icons.bluetooth,
+              color: _bleState == BLEConnectionState.meshActive
+                  ? Colors.blue
+                  : Colors.grey,
+              size: 20,
+            ),
+          ),
+          // Test notification button
+          IconButton(
+            icon: const Icon(Icons.notifications_active, size: 20),
+            tooltip: 'Test Notification',
+            onPressed: () async {
+              final success = await _bleService.testNotification();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(success
+                        ? 'Test notification sent!'
+                        : 'Failed to send test notification'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            },
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Low power warning
+            if (_isLowPowerMode)
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withAlpha(40),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.battery_alert, color: Colors.orange, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Low Power Mode ON. Disable for reliable mesh.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+>>>>>>> 1f347633101d9ef9f9eacb964031c2166999fcd9
 
           SafeArea(
             child: Column(
