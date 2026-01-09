@@ -98,6 +98,111 @@ class _DisasterMapPageState extends State<DisasterMapPage>
           MarkerLayer(markers: _buildMarkers()),
         ],
       ),
+      bottomSheet: DraggableScrollableSheet(
+        initialChildSize: 0.3,
+        minChildSize: 0.1,
+        maxChildSize: 0.6,
+        snap: true,
+        builder: (context, scrollController) {
+          return Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(20),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(20),
+                  blurRadius: 10,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                Center(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.list, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        "Past 24h Events (${_events.length})",
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.separated(
+                    controller: scrollController,
+                    itemCount: _events.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1, indent: 64),
+                    itemBuilder: (context, index) {
+                      final event = _events[index];
+                      final style = _getDisasterStyle(event.type);
+                      final timeStr = _formatTime(event.time);
+
+                      return ListTile(
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: style.color.withAlpha(30),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(style.icon, color: style.color, size: 20),
+                        ),
+                        title: Text(
+                          event.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          "${event.description} • $timeStr",
+                          style: TextStyle(
+                            color: Theme.of(context).textTheme.bodySmall?.color,
+                            fontSize: 12,
+                          ),
+                        ),
+                        onTap: () {
+                          // Move map to location
+                          _mapController.move(
+                            LatLng(event.latitude, event.longitude),
+                            10.0,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 

@@ -47,10 +47,9 @@ class DisasterService {
   // I will use 2.5 day to ensure we cover "last 24 hours" comfortably, or specific 1.0_day
   // "all_day" is usually "all_day" (past 24h). Let's use 'all_day' for significant?
   // User asked for "all disaster events reported globally within the last 24 hours".
-  // 'all_day.geojson' includes small ones. '4.5_day' includes > 4.5.
-  // I'll use '4.5_day.geojson' to avoid thousands of micro-quakes cluttering the map.
+  // 'all_day.geojson' includes all earthquakes from the past day.
   static const String usgsUrl =
-      'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson';
+      'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson';
 
   // NOAA API
   static const String noaaApi =

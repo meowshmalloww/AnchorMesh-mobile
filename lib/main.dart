@@ -8,6 +8,7 @@ import 'services/connectivity_service.dart';
 import 'services/supabase_service.dart';
 import 'services/ble_service.dart';
 import 'services/packet_store.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 

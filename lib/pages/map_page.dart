@@ -27,7 +27,7 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
   bool get wantKeepAlive => true;
 
   List<SOSPacket> _packets = [];
-  double _currentZoom = 13.0;
+  final ValueNotifier<double> _zoomNotifier = ValueNotifier<double>(13.0);
   StreamSubscription? _packetSubscription;
 
   // Zoom thresholds for view modes
@@ -73,12 +73,13 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
     final centerLat = (lats.reduce((a, b) => a + b)) / lats.length;
     final centerLon = (lons.reduce((a, b) => a + b)) / lons.length;
 
-    _mapController.move(LatLng(centerLat, centerLon), _currentZoom);
+    _mapController.move(LatLng(centerLat, centerLon), _zoomNotifier.value);
   }
 
   @override
   void dispose() {
     _packetSubscription?.cancel();
+    _zoomNotifier.dispose();
     super.dispose();
   }
 
@@ -106,8 +107,15 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
               minZoom: ApiConfig.minMapZoom,
               maxZoom: ApiConfig.maxMapZoom,
               onPositionChanged: (position, hasGesture) {
-                setState(() => _currentZoom = position.zoom);
+                // Update notifier instead of setState
+                // This prevents the entire MapPage from rebuilding on every frame of drag
+                if (position.zoom != _zoomNotifier.value) {
+                  _zoomNotifier.value = position.zoom;
+                }
               },
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
             ),
             children: [
               // Tile layer (OSM by default - FREE, MapTiler optional)
@@ -118,11 +126,25 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
                 userAgentPackageName: 'com.development.heyblue',
                 maxZoom: ApiConfig.maxMapZoom,
               ),
-              // Markers layer
-              MarkerLayer(markers: _buildMarkers()),
-              // Heatmap circles (for city/street view)
-              if (_currentZoom < streetViewZoom)
-                CircleLayer(circles: _buildHeatmapCircles()),
+
+              // Markers layer (Always visible, but opacity/size could depend on zoom)
+              ValueListenableBuilder<double>(
+                valueListenable: _zoomNotifier,
+                builder: (context, zoom, child) {
+                  return MarkerLayer(markers: _buildMarkers(zoom));
+                },
+              ),
+
+              // Heatmap circles (Reactive to zoom)
+              ValueListenableBuilder<double>(
+                valueListenable: _zoomNotifier,
+                builder: (context, zoom, child) {
+                  if (zoom < streetViewZoom) {
+                    return CircleLayer(circles: _buildHeatmapCircles(zoom));
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
             ],
           ),
         ],
@@ -130,9 +152,9 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
     );
   }
 
-  List<Marker> _buildMarkers() {
+  List<Marker> _buildMarkers(double currentZoom) {
     // Only show individual markers in close-up view
-    if (_currentZoom < streetViewZoom) return [];
+    if (currentZoom < streetViewZoom) return [];
 
     return _packets.map((packet) {
       final color = Color(packet.status.colorValue);
@@ -165,11 +187,11 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
     }).toList();
   }
 
-  List<CircleMarker> _buildHeatmapCircles() {
+  List<CircleMarker> _buildHeatmapCircles(double currentZoom) {
     if (_packets.isEmpty) return [];
 
     // Group packets by approximate location (grid cells)
-    final gridSize = _currentZoom < cityViewZoom ? 0.1 : 0.02; // degrees
+    final gridSize = currentZoom < cityViewZoom ? 0.1 : 0.02; // degrees
     final groups = <String, List<SOSPacket>>{};
 
     for (final packet in _packets) {
@@ -206,7 +228,7 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
       });
 
       final color = Color(urgentStatus.colorValue);
-      final radius = _currentZoom < cityViewZoom
+      final radius = currentZoom < cityViewZoom
           ? 30.0 + (packets.length * 5).clamp(0, 50).toDouble()
           : 15.0 + (packets.length * 3).clamp(0, 30).toDouble();
 

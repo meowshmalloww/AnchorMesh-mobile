@@ -20,8 +20,8 @@ class SOSPage extends StatefulWidget {
   State<SOSPage> createState() => _SOSPageState();
 }
 
-class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
-  // Location
+class _SOSPageState extends State<SOSPage>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   // Location
   double? _latitude;
   double? _longitude;
@@ -39,7 +39,6 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   int _echoSources = 0;
   VerificationStatus? _myVerification;
   bool _isWifiEnabled = false;
-  Timer? _wifiCheckTimer;
 
   // Received packets
   final List<SOSPacket> _receivedPackets = [];
@@ -65,6 +64,7 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupAnimation();
     _setupListeners();
     _loadActivePackets();
@@ -72,12 +72,14 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     // Initial WiFi check
     _checkWifiStatus();
     _getCurrentLocation(); // Auto-fetch location on load
+  }
 
-    // Check WiFi status occasionally while open
-    _wifiCheckTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) => _checkWifiStatus(),
-    );
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkWifiStatus();
+      _bleService.reinitializeEventChannel();
+    }
   }
 
   Future<void> _checkWifiStatus() async {
@@ -217,7 +219,8 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     _handshakeSubscription?.cancel();
     _verificationSubscription?.cancel();
     _locationSub?.cancel();
-    _wifiCheckTimer?.cancel();
+    // _wifiCheckTimer?.cancel(); // Removed
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 

@@ -463,12 +463,14 @@ class BLEService {
     // Check for congestion
     if (_broadcastQueue.length > 100) {
       if (_broadcastQueue.length % 50 == 0) {
-        _errorController.add(
-          'High network congestion: ${_broadcastQueue.length} active signals.',
-        );
+        _errorController.add('Network congestion: dropping oldest relays.');
       }
-      // Prioritize: drop oldest non-SOS packets if possible?
-      // For now just warn.
+
+      // Drop oldest forwarded packet (from the end of the list)
+      // We protect index 0 if it's us, but we generally relay from end.
+      // Actually relay logic iterates.
+      // Simple strategy: Remove last item.
+      _broadcastQueue.removeLast();
     }
 
     // Add or update in queue
@@ -585,8 +587,9 @@ class BLEService {
     _broadcastTimer?.cancel();
     _broadcastTick = 0;
 
-    // Broadcast every 300ms, cycling through queue
-    _broadcastTimer = Timer.periodic(const Duration(milliseconds: 300), (
+    // Broadcast every 1500ms, cycling through queue
+    // 300ms was too fast for some iOS radio stacks, causing freezes/crashes
+    _broadcastTimer = Timer.periodic(const Duration(milliseconds: 1500), (
       timer,
     ) async {
       _broadcastTick++;

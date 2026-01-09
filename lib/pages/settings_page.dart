@@ -8,6 +8,7 @@ import '../services/ble_service.dart';
 import '../models/settings_enums.dart';
 import 'alerts_history_page.dart';
 import 'region_selection_page.dart';
+import '../theme_notifier.dart';
 
 // Re-export for backward compatibility
 export '../models/settings_enums.dart';
@@ -87,6 +88,57 @@ class _SettingsPageState extends State<SettingsPage> {
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
+          // Display Section
+          _buildSectionCard(
+            title: 'Display',
+            icon: Icons.brightness_6,
+            iconColor: Colors.deepPurple,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Theme Mode')),
+                    SegmentedButton<ThemeMode>(
+                      segments: const [
+                        ButtonSegment(
+                          value: ThemeMode.system,
+                          label: Text('Auto'),
+                          icon: Icon(Icons.brightness_auto),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.light,
+                          label: Text('Light'),
+                          icon: Icon(Icons.light_mode),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.dark,
+                          label: Text('Dark'),
+                          icon: Icon(Icons.dark_mode),
+                        ),
+                      ],
+                      selected: {ThemeNotifier().value},
+                      onSelectionChanged: (Set<ThemeMode> newSelection) {
+                        setState(() {
+                          ThemeNotifier().setTheme(newSelection.first);
+                        });
+                      },
+                      style: ButtonStyle(
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
           // Battery Mode Section
           _buildSectionCard(
             title: 'Battery Mode',

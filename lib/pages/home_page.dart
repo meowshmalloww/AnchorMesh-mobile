@@ -4,9 +4,7 @@ import '../services/ble_service.dart';
 import '../services/connectivity_service.dart' hide AlertLevel;
 import '../services/disaster_service.dart';
 import '../theme/resq_theme.dart';
-import '../painters/mesh_background_painter.dart';
 import '../painters/custom_borders.dart';
-import '../widgets/sos_button.dart';
 import 'disaster_map_page.dart';
 
 /// ResQ Home Page - Premium Redesign
@@ -73,88 +71,66 @@ class _HomePageState extends State<HomePage>
     super.dispose();
   }
 
-  void _onSOSPressed() {
-    // Navigate to SOS tab
-    widget.onTabChange?.call(3);
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = context.resq;
-    final size = MediaQuery.of(context).size;
 
     return Scaffold(
       backgroundColor: colors.surface,
-      body: Stack(
-        children: [
-          // Mesh background
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: MeshBackground(
-                nodeColor: colors.meshNode,
-                lineColor: colors.meshLine,
-                glowColor: colors.meshGlow,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Top bar
+            _buildTopBar(colors),
+
+            // Alert banner
+            if (_alertLevel != AlertLevel.peace)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                child: _buildAlertBanner(colors),
+              ),
+
+            // Status pills
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: _buildStatusRow(colors),
+            ),
+
+            const Spacer(),
+
+            // Placeholder or Info Text instead of SOS Button
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.shield_outlined,
+                    size: 64,
+                    color: colors.textSecondary.withAlpha(50),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'SYSTEM READY',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
 
-          // Main content
-          SafeArea(
-            child: Column(
-              children: [
-                // Top bar
-                _buildTopBar(colors),
+            const Spacer(),
 
-                // Alert banner
-                if (_alertLevel != AlertLevel.peace)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                    child: _buildAlertBanner(colors),
-                  ),
-
-                // Status pills
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: _buildStatusRow(colors),
-                ),
-
-                const Spacer(),
-
-                // Central SOS Button
-                Center(
-                  child: SOSButton(
-                    onPressed: _onSOSPressed,
-                    isActive: _bleState == BLEConnectionState.meshActive,
-                    size: size.width * 0.45,
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // Subtitle
-                Text(
-                  _bleState == BLEConnectionState.meshActive
-                      ? 'MESH ACTIVE'
-                      : 'TAP TO SEND DISTRESS',
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 2,
-                  ),
-                ),
-
-                const Spacer(),
-
-                // Bottom action card
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                  child: _buildDisasterCard(colors),
-                ),
-              ],
+            // Bottom action card
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+              child: _buildDisasterCard(colors),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
