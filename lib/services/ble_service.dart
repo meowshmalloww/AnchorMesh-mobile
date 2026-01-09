@@ -111,11 +111,6 @@ class BLEService {
   // Broadcast priority tracking
   int _broadcastTick = 0;
 
-  // Relay mode state (for devices that can't advertise)
-  bool _isRelayMode = false;
-  final _relayModeController = StreamController<bool>.broadcast();
-  final _relayWriteController = StreamController<Map<String, dynamic>>.broadcast();
-
   /// Stream of connection state changes
   Stream<BLEConnectionState> get connectionState =>
       _connectionStateController.stream;
@@ -135,15 +130,6 @@ class BLEService {
 
   /// Stream of handshake count updates
   Stream<int> get onHandshakeUpdate => _handshakeController.stream;
-
-  /// Stream of relay mode changes (for devices that can't advertise)
-  Stream<bool> get onRelayModeChange => _relayModeController.stream;
-
-  /// Stream of relay write events (success/failure when writing to relay nodes)
-  Stream<Map<String, dynamic>> get onRelayWriteEvent => _relayWriteController.stream;
-
-  /// Whether device is in relay mode (can't advertise, using write-to-relay)
-  bool get isRelayMode => _isRelayMode;
 
   /// Current connection state
   BLEConnectionState get state => _state;
@@ -239,33 +225,6 @@ class BLEService {
       case 'error':
         if (data is String) {
           _errorController.add(data);
-        }
-        break;
-      case 'relayMode':
-        if (data is bool) {
-          _isRelayMode = data;
-          _relayModeController.add(data);
-          if (data) {
-            debugPrint('BLE: Entered relay mode (device cannot advertise)');
-          } else {
-            debugPrint('BLE: Exited relay mode');
-          }
-        }
-        break;
-      case 'relayWriteSuccess':
-        if (data is Map) {
-          final eventData = Map<String, dynamic>.from(data);
-          _relayWriteController.add(eventData);
-          final success = eventData['success'] as bool? ?? false;
-          final address = eventData['address'] as String? ?? 'unknown';
-          if (success) {
-            debugPrint('BLE: Successfully wrote packet to relay node $address');
-            // Count this as a handshake
-            _handshakeCount++;
-            _handshakeController.add(_handshakeCount);
-          } else {
-            debugPrint('BLE: Failed to write packet to relay node $address');
-          }
         }
         break;
     }
@@ -443,7 +402,6 @@ class BLEService {
   }
 
   /// Start broadcasting own SOS
-  /// Automatically uses write-to-relay mode for devices that can't advertise
   Future<bool> startBroadcasting({
     required double latitude,
     required double longitude,
@@ -469,27 +427,14 @@ class BLEService {
     // Add self to front of queue
     _broadcastQueue.insert(0, _currentBroadcast!);
 
-    // Check if device supports advertising
-    final canAdvertise = await supportsAdvertising();
+    // Start round-robin broadcasting
+    _startBroadcastLoop();
 
     try {
-      if (canAdvertise) {
-        // Normal advertising path
-        // Start round-robin broadcasting
-        _startBroadcastLoop();
-
-        final result = await _channel.invokeMethod<bool>('startBroadcasting', {
-          'packet': _currentBroadcast!.toBytes(),
-        });
-        return result ?? false;
-      } else {
-        // Write-to-relay path for devices that can't advertise
-        debugPrint('Device cannot advertise - using write-to-relay mode');
-        final result = await _channel.invokeMethod<bool>('writePacketToRelay', {
-          'packet': _currentBroadcast!.toBytes(),
-        });
-        return result ?? false;
-      }
+      final result = await _channel.invokeMethod<bool>('startBroadcasting', {
+        'packet': _currentBroadcast!.toBytes(),
+      });
+      return result ?? false;
     } on PlatformException catch (e) {
       _errorController.add('Failed to start broadcasting: ${e.message}');
       return false;
@@ -690,19 +635,6 @@ class BLEService {
     }
   }
 
-  /// Check if device supports BLE advertising (peripheral mode).
-  /// Not all Bluetooth 4.0 chipsets support advertising - this is a hardware limitation.
-  /// Returns true on iOS (always supported) or Android with advertising-capable hardware.
-  Future<bool> supportsAdvertising() async {
-    try {
-      final result = await _channel.invokeMethod<bool>('supportsAdvertising');
-      return result ?? false;
-    } on PlatformException {
-      // On iOS, always return true as advertising is always supported
-      return true;
-    }
-  }
-
   /// Check if WiFi is enabled (potential interference)
   Future<bool> checkWifiStatus() async {
     try {
@@ -732,58 +664,6 @@ class BLEService {
   /// Get broadcast queue size
   int get queueSize => _broadcastQueue.length;
 
-  // =====================
-  // Background Monitoring
-  // =====================
-
-  /// Start background monitoring for SOS signals.
-  /// On Android: Starts foreground service for continuous BLE scanning.
-  /// On iOS: Enables CoreBluetooth state restoration for background wakeup.
-  Future<bool> startBackgroundMonitoring() async {
-    try {
-      final result = await _channel.invokeMethod<bool>('startBackgroundMonitoring');
-      return result ?? false;
-    } on PlatformException catch (e) {
-      _errorController.add('Failed to start background monitoring: ${e.message}');
-      return false;
-    }
-  }
-
-  /// Stop background monitoring.
-  /// On Android: Stops the foreground service.
-  /// On iOS: Disables background monitoring flag.
-  Future<bool> stopBackgroundMonitoring() async {
-    try {
-      final result = await _channel.invokeMethod<bool>('stopBackgroundMonitoring');
-      return result ?? false;
-    } on PlatformException catch (e) {
-      _errorController.add('Failed to stop background monitoring: ${e.message}');
-      return false;
-    }
-  }
-
-  /// Check if notification permission is granted.
-  /// Required for showing SOS alerts when app is in background.
-  Future<bool> hasNotificationPermission() async {
-    try {
-      final result = await _channel.invokeMethod<bool>('hasNotificationPermission');
-      return result ?? false;
-    } on PlatformException {
-      return false;
-    }
-  }
-
-  /// Request notification permission.
-  /// Returns true if permission was granted.
-  Future<bool> requestNotificationPermission() async {
-    try {
-      final result = await _channel.invokeMethod<bool>('requestNotificationPermission');
-      return result ?? false;
-    } on PlatformException {
-      return false;
-    }
-  }
-
   /// Dispose resources
   void dispose() {
     _broadcastTimer?.cancel();
@@ -794,7 +674,5 @@ class BLEService {
     _echoController.close();
     _verificationController.close();
     _handshakeController.close();
-    _relayModeController.close();
-    _relayWriteController.close();
   }
 }

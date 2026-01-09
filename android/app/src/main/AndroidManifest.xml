@@ -2,8 +2,6 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.FLASHLIGHT" />
-    <!-- Microphone for ultrasonic detector -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- BLE Mesh Networking Permissions -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
@@ -22,10 +20,6 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Wake lock for background tasks -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Notifications for SOS alerts (Android 13+) -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Vibration for SOS alerts -->
-    <uses-permission android:name="android.permission.VIBRATE" />
     
     <application
         android:label="project_flutter"

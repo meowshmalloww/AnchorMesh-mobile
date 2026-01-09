@@ -44,8 +44,6 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   // Animation
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
-  late AnimationController _pressController;
-  late Animation<double> _pressAnimation;
 
   // Services
   final BLEService _bleService = BLEService.instance;
@@ -91,14 +89,6 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
     );
     _pulseAnimation = Tween<double>(begin: 1.0, end: 1.12).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
-    _pressController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    );
-    _pressAnimation = Tween<double>(begin: 1.0, end: 0.92).animate(
-      CurvedAnimation(parent: _pressController, curve: Curves.easeInOut),
     );
   }
 
@@ -214,7 +204,6 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _pulseController.dispose();
-    _pressController.dispose();
     _stateSubscription?.cancel();
     _packetSubscription?.cancel();
     _errorSubscription?.cancel();
@@ -327,14 +316,6 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
       if (success) {
         _pulseController.repeat(reverse: true);
         setState(() => _isBroadcasting = true);
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to start SOS broadcast. Check Bluetooth permissions.'),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
     }
   }
@@ -507,16 +488,11 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
 
             // Main SOS button
             AnimatedBuilder(
-              animation: Listenable.merge([_pulseAnimation, _pressAnimation]),
+              animation: _pulseAnimation,
               builder: (context, child) {
-                final pulseScale = _isBroadcasting ? _pulseAnimation.value : 1.0;
-                final pressScale = _pressAnimation.value;
                 return Transform.scale(
-                  scale: pulseScale * pressScale,
+                  scale: _isBroadcasting ? _pulseAnimation.value : 1.0,
                   child: GestureDetector(
-                    onTapDown: (_) => _pressController.forward(),
-                    onTapUp: (_) => _pressController.reverse(),
-                    onTapCancel: () => _pressController.reverse(),
                     onTap: _toggleBroadcast,
                     child: Container(
                       width: 160,
@@ -540,44 +516,24 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            _selectedStatus.icon,
+                            _isBroadcasting ? Icons.stop : _selectedStatus.icon,
                             size: 36,
                             color: Colors.white,
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 6),
                           Text(
-                            _selectedStatus.label,
+                            _isBroadcasting ? "STOP" : _selectedStatus.label,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(height: 2),
                           if (_isBroadcasting)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withAlpha(50),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Text(
-                                "TAP TO STOP",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            )
-                          else
-                            Text(
-                              "TAP TO SEND",
+                            const Text(
+                              "Broadcasting...",
                               style: TextStyle(
-                                color: Colors.white.withAlpha(180),
+                                color: Colors.white70,
                                 fontSize: 10,
                               ),
                             ),
@@ -589,57 +545,7 @@ class _SOSPageState extends State<SOSPage> with TickerProviderStateMixin {
               },
             ),
 
-            const SizedBox(height: 16),
-
-            // Broadcasting status indicator
-            AnimatedOpacity(
-              opacity: _isBroadcasting ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 300),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: statusColor.withAlpha(30),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: statusColor.withAlpha(100),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: statusColor.withAlpha(150),
-                            blurRadius: 6,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      "BROADCASTING ${_selectedStatus.label}",
-                      style: TextStyle(
-                        color: statusColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 16),
+            const SizedBox(height: 30),
 
             // Mesh feedback stats (only when broadcasting)
             if (_isBroadcasting) ...[

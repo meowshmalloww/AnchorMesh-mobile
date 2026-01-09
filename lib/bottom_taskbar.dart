@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'services/platform_service.dart';
 
-class CustomBottomBar extends StatefulWidget {
+class CustomBottomBar extends StatelessWidget {
   final int selectedIndex;
   final Function(int) onItemSelected;
 
@@ -12,23 +11,9 @@ class CustomBottomBar extends StatefulWidget {
   });
 
   @override
-  State<CustomBottomBar> createState() => _CustomBottomBarState();
-}
-
-class _CustomBottomBarState extends State<CustomBottomBar> {
-  @override
-  void initState() {
-    super.initState();
-    // Apply iOS 26 Liquid Glass effect to the taskbar
-    PlatformService.instance.applyLiquidGlass('bottom_taskbar', intensity: 0.85);
-    // Apply Android native theme integration
-    PlatformService.instance.applyAndroidNativeTheme('bottom_taskbar_material_you');
-  }
-
-  @override
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDarkMode ? Colors.black.withAlpha(180) : Colors.white.withAlpha(180);
+    final backgroundColor = isDarkMode ? Colors.black : Colors.white;
     final shadowColor = isDarkMode ? Colors.white12 : Colors.black12;
 
     return Container(
@@ -51,16 +36,17 @@ class _CustomBottomBarState extends State<CustomBottomBar> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
+              _buildNavBarItem(context, Icons.home_rounded, "Home", 0),
+              _buildNavBarItem(context, Icons.map_rounded, "Map", 1),
+              _buildNavBarItem(context, Icons.build_rounded, "Utilities", 2),
               _buildNavBarItem(
                 context,
                 Icons.support_rounded,
                 "SOS",
-                0,
+                3,
                 isSOS: true,
               ),
-              _buildNavBarItem(context, Icons.map_rounded, "Map", 1),
-              _buildNavBarItem(context, Icons.build_rounded, "Utilities", 2),
-              _buildNavBarItem(context, Icons.settings_rounded, "Settings", 3),
+              _buildNavBarItem(context, Icons.settings_rounded, "Settings", 4),
             ],
           ),
         ),
@@ -75,13 +61,13 @@ class _CustomBottomBarState extends State<CustomBottomBar> {
     int index, {
     bool isSOS = false,
   }) {
-    final isSelected = widget.selectedIndex == index;
+    final isSelected = selectedIndex == index;
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     // Adapt color based on theme: White for Dark Mode, Black for Light Mode
     final color = isDarkMode ? Colors.white : Colors.black;
 
     return GestureDetector(
-      onTap: () => widget.onItemSelected(index),
+      onTap: () => onItemSelected(index),
       behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 0.0),
