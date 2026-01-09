@@ -8,7 +8,9 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:torch_light/torch_light.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_audio_capture/flutter_audio_capture.dart';
 import '../utils/morse_code_translator.dart';
+import '../utils/fft_analyzer.dart';
 import 'signal_locator_page.dart';
 
 class OfflineUtilityPage extends StatefulWidget {
@@ -40,6 +42,12 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   double _detectedLevel = 0.0;
   Timer? _detectorTimer;
   bool _micPermissionGranted = false;
+
+  // Audio capture for detector
+  final FlutterAudioCapture _audioCapture = FlutterAudioCapture();
+  final FFTAnalyzer _fftAnalyzer = FFTAnalyzer(sampleRate: 44100, fftSize: 4096);
+  final List<double> _audioBuffer = [];
+  double? _detectedFrequency;
 
   @override
   void initState() {
@@ -76,7 +84,8 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     _messageController.dispose();
     _stopStrobe();
     _stopUltrasonic();
-    _stopDetector();
+    _detectorTimer?.cancel();
+    _audioCapture.stop().catchError((_) {});
     _audioPlayer.dispose();
     super.dispose();
   }
@@ -299,7 +308,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     HapticFeedback.mediumImpact();
 
     if (_isDetecting) {
-      _stopDetector();
+      await _stopDetector();
     } else {
       await _startDetector();
     }
@@ -323,39 +332,106 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
     }
 
     setState(() => _isDetecting = true);
+    _audioBuffer.clear();
 
-    // Simulate detector with visual feedback
-    // Real implementation would use native audio recording and FFT analysis
-    _detectorTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
-      if (!_isDetecting) {
-        timer.cancel();
-        return;
-      }
+    try {
+      // Start audio capture with callback for real-time processing
+      await _audioCapture.start(
+        (dynamic obj) {
+          if (!_isDetecting) return;
 
-      // Simulate signal detection (random for demo)
-      // Real implementation would analyze microphone input for high frequencies
-      setState(() {
-        _detectedLevel = math.Random().nextDouble() * 0.3;
-      });
-    });
+          // Convert incoming audio data to double samples
+          if (obj is Float64List) {
+            _audioBuffer.addAll(obj);
+          } else if (obj is List) {
+            for (var sample in obj) {
+              if (sample is double) {
+                _audioBuffer.add(sample);
+              } else if (sample is num) {
+                _audioBuffer.add(sample.toDouble());
+              }
+            }
+          }
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Listening for ultrasonic signals...'),
-          backgroundColor: Colors.teal,
-        ),
+          // Keep buffer at reasonable size (keep last 8192 samples)
+          while (_audioBuffer.length > 8192) {
+            _audioBuffer.removeAt(0);
+          }
+        },
+        (error) {
+          debugPrint('Audio capture error: $error');
+        },
+        sampleRate: 44100,
+        bufferSize: 4096,
       );
+
+      // Start periodic FFT analysis
+      _detectorTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+        if (!_isDetecting) {
+          timer.cancel();
+          return;
+        }
+
+        if (_audioBuffer.length >= 4096) {
+          // Analyze ultrasonic level using FFT
+          final level = _fftAnalyzer.analyzeUltrasonicLevel(_audioBuffer);
+          final freq = _fftAnalyzer.getDominantUltrasonicFrequency(_audioBuffer);
+
+          if (mounted) {
+            setState(() {
+              _detectedLevel = level;
+              _detectedFrequency = freq;
+            });
+
+            // Vibrate on strong signal detection
+            if (level > 0.5) {
+              HapticFeedback.lightImpact();
+            }
+          }
+        }
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Listening for ultrasonic signals...'),
+            backgroundColor: Colors.teal,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Failed to start audio capture: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to start detector: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isDetecting = false);
+      }
     }
   }
 
-  void _stopDetector() {
+  Future<void> _stopDetector() async {
     _detectorTimer?.cancel();
     _detectorTimer = null;
-    setState(() {
-      _isDetecting = false;
-      _detectedLevel = 0.0;
-    });
+
+    try {
+      await _audioCapture.stop();
+    } catch (e) {
+      debugPrint('Error stopping audio capture: $e');
+    }
+
+    _audioBuffer.clear();
+
+    if (mounted) {
+      setState(() {
+        _isDetecting = false;
+        _detectedLevel = 0.0;
+        _detectedFrequency = null;
+      });
+    }
   }
 
   @override
@@ -764,14 +840,38 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Icon(Icons.graphic_eq, color: Colors.teal),
-                      SizedBox(width: 8),
-                      Text(
-                        "Signal Level",
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                      const Row(
+                        children: [
+                          Icon(Icons.graphic_eq, color: Colors.teal),
+                          SizedBox(width: 8),
+                          Text(
+                            "Signal Level",
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ],
                       ),
+                      if (_detectedFrequency != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.teal.withAlpha(30),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            "${(_detectedFrequency! / 1000).toStringAsFixed(1)} kHz",
+                            style: const TextStyle(
+                              color: Colors.teal,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -793,10 +893,10 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
                   const SizedBox(height: 8),
                   Text(
                     _detectedLevel > 0.7
-                        ? "Strong signal detected!"
+                        ? "Strong ultrasonic signal detected!"
                         : _detectedLevel > 0.3
-                        ? "Weak signal"
-                        : "Listening...",
+                        ? "Weak ultrasonic signal"
+                        : "Listening for ultrasonic frequencies (15-22 kHz)...",
                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ],

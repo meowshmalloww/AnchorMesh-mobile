@@ -37,6 +37,8 @@
 	<string>This app broadcasts emergency SOS signals via Bluetooth to nearby devices.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>The flashlight is used for SOS signaling. Camera access is not used for capturing images.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app uses the microphone to detect ultrasonic SOS signals from nearby devices.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>This app uses motion sensors to determine compass heading for navigation.</string>
 	<key>NSLocationAlwaysUsageDescription</key>

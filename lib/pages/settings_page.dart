@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/packet_store.dart';
 import '../services/offline_map_service.dart';
 import '../services/ble_service.dart';
+import '../services/connectivity_service.dart';
 
 /// Battery saving modes for mesh operation
 enum BatteryMode {
@@ -97,10 +99,55 @@ class _SettingsPageState extends State<SettingsPage> {
   int _customScanSeconds = 30;
   int _customSleepSeconds = 30;
 
+  // Status info from home page
+  final BLEService _bleService = BLEService.instance;
+  final DisasterMonitor _disasterMonitor = DisasterMonitor.instance;
+  final ConnectivityChecker _connectivityChecker = ConnectivityChecker.instance;
+
+  AlertLevel _alertLevel = AlertLevel.peace;
+  BLEConnectionState _bleState = BLEConnectionState.idle;
+  bool _isOnline = true;
+  int _activeSosCount = 0;
+
+  StreamSubscription? _alertSub;
+  StreamSubscription? _bleSub;
+  StreamSubscription? _connectSub;
+
   @override
   void initState() {
     super.initState();
     _loadSettings();
+    _setupStatusListeners();
+    _loadStatusData();
+  }
+
+  void _setupStatusListeners() {
+    _alertSub = _disasterMonitor.levelStream.listen((level) {
+      if (mounted) setState(() => _alertLevel = level);
+    });
+
+    _bleSub = _bleService.connectionState.listen((state) {
+      if (mounted) setState(() => _bleState = state);
+    });
+
+    _connectSub = _connectivityChecker.statusStream.listen((online) {
+      if (mounted) setState(() => _isOnline = online);
+    });
+  }
+
+  Future<void> _loadStatusData() async {
+    final packets = await _bleService.getActivePackets();
+    if (mounted) {
+      setState(() => _activeSosCount = packets.length);
+    }
+  }
+
+  @override
+  void dispose() {
+    _alertSub?.cancel();
+    _bleSub?.cancel();
+    _connectSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadSettings() async {
@@ -146,10 +193,85 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: ListView(
+      appBar: AppBar(
+        title: const Text('Settings'),
+        actions: [
+          // Connection indicator
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Icon(
+              _isOnline ? Icons.wifi : Icons.wifi_off,
+              color: _isOnline ? Colors.green : Colors.red,
+              size: 20,
+            ),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadStatusData,
+        child: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
+          // Alert banner
+          if (_alertLevel != AlertLevel.peace)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: _buildAlertBanner(),
+            ),
+
+          // Status Section
+          _buildSectionCard(
+            title: 'Status',
+            icon: Icons.dashboard,
+            iconColor: Colors.blue,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  children: [
+                    _buildStatusRow(
+                      icon: Icons.bluetooth,
+                      title: 'Mesh Status',
+                      value: _getBleStatusText(),
+                      color: _getBleStatusColor(),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildStatusRow(
+                      icon: Icons.sensors,
+                      title: 'Active SOS Signals',
+                      value: _activeSosCount.toString(),
+                      color: _activeSosCount > 0 ? Colors.red : Colors.grey,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildStatusRow(
+                      icon: Icons.cloud,
+                      title: 'Internet',
+                      value: _isOnline ? 'Connected' : 'Offline',
+                      color: _isOnline ? Colors.green : Colors.orange,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Global Alerts Section
+          _buildSectionCard(
+            title: 'Global Alerts',
+            icon: Icons.warning_amber,
+            iconColor: Colors.orange,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: _buildGlobalAlerts(),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
           // Battery Mode Section
           _buildSectionCard(
             title: 'Battery Mode',
@@ -340,7 +462,226 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 30),
         ],
       ),
+      ),
     );
+  }
+
+  Widget _buildAlertBanner() {
+    final color = _alertLevel == AlertLevel.disaster
+        ? Colors.red
+        : Colors.orange;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withAlpha(30),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _alertLevel.label.toUpperCase(),
+                  style: TextStyle(fontWeight: FontWeight.bold, color: color),
+                ),
+                Text(
+                  _alertLevel.description,
+                  style: TextStyle(fontSize: 12, color: color),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusRow({
+    required IconData icon,
+    required String title,
+    required String value,
+    required Color color,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.grey[850] : Colors.grey[50],
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withAlpha(30),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                ),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGlobalAlerts() {
+    // Get cached alerts from disaster monitor
+    final cachedNOAA = _disasterMonitor.cachedNOAAResult;
+    final hasEarthquake = _disasterMonitor.cachedUSGSResult ?? false;
+
+    if (cachedNOAA == null && !hasEarthquake) {
+      return Row(
+        children: [
+          const Icon(Icons.check_circle, color: Colors.green, size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'No Active Alerts',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  'All systems normal',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        if (hasEarthquake)
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withAlpha(20),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.orange),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.public, color: Colors.orange, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Earthquake Alert',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange,
+                        ),
+                      ),
+                      Text(
+                        'Significant earthquake detected (M6.0+)',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (cachedNOAA != null)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red.withAlpha(20),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.red),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning, color: Colors.red, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        cachedNOAA['event'] ?? 'Weather Alert',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red,
+                        ),
+                      ),
+                      Text(
+                        cachedNOAA['severity'] ?? 'Severe',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _getBleStatusText() {
+    switch (_bleState) {
+      case BLEConnectionState.meshActive:
+        return 'Active';
+      case BLEConnectionState.broadcasting:
+        return 'Broadcasting';
+      case BLEConnectionState.scanning:
+        return 'Scanning';
+      case BLEConnectionState.bluetoothOff:
+        return 'Bluetooth Off';
+      case BLEConnectionState.unavailable:
+        return 'Unavailable';
+      case BLEConnectionState.idle:
+        return 'Idle';
+    }
+  }
+
+  Color _getBleStatusColor() {
+    switch (_bleState) {
+      case BLEConnectionState.meshActive:
+        return Colors.green;
+      case BLEConnectionState.broadcasting:
+      case BLEConnectionState.scanning:
+        return Colors.blue;
+      case BLEConnectionState.bluetoothOff:
+      case BLEConnectionState.unavailable:
+        return Colors.red;
+      case BLEConnectionState.idle:
+        return Colors.grey;
+    }
   }
 
   Widget _buildPacketRow(String bytes, String field, String size) {
