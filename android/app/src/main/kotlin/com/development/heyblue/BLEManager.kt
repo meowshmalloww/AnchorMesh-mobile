@@ -390,11 +390,21 @@ class BLEManager(private val context: Context) {
 
     fun stopBroadcasting(): Boolean {
         try {
+            // Stop Extended Advertising if active
             if (advertisingSet != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                bluetoothLeAdvertiser?.stopAdvertisingSet(advertisingSetCallback)
+                try {
+                    bluetoothLeAdvertiser?.stopAdvertisingSet(advertisingSetCallback)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error stopping extended advertising: ${e.message}")
+                }
                 advertisingSet = null
-            } else {
+            }
+            
+            // ALWAYS stop Legacy Advertising (since we always start it)
+            try {
                 bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+            } catch (e: Exception) {
+                Log.w(TAG, "Error stopping legacy advertising: ${e.message}")
             }
             
             gattServer?.close()

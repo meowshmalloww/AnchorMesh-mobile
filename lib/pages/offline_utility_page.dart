@@ -60,7 +60,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
             Tab(icon: Icon(Icons.explore, size: 20), text: "Compass"),
             Tab(icon: Icon(Icons.navigation, size: 20), text: "Pointer"),
             Tab(icon: Icon(Icons.flashlight_on, size: 20), text: "Strobe"),
-            Tab(icon: Icon(Icons.hearing, size: 20), text: "Audio"),
+            Tab(icon: Icon(Icons.graphic_eq, size: 20), text: "Ultrasonic"),
             Tab(icon: Icon(Icons.radar, size: 20), text: "Scan"),
           ],
         ),

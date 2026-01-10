@@ -96,6 +96,8 @@ class _HomePageState extends State<HomePage>
               child: _buildStatusRow(colors),
             ),
 
+            const SizedBox(height: 16),
+
             const Spacer(),
 
             // Placeholder or Info Text instead of SOS Button

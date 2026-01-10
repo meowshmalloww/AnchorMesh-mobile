@@ -23,7 +23,8 @@ class ApiConfig {
 
   /// MapTiler API Key (DISABLED by default to save quota)
   /// Set useMapTiler = true to enable
-  static const String mapTilerApiKey = ''; // !MapTIler APi Key
+  static const String mapTilerApiKey =
+      'RTqHkOZyon4AG1STywyT'; // !MapTiler APi Key
 
   /// IMPORTANT: Set to false to use free OSM tiles
   /// Each map view = 15-30 tile requests! Set to true only for demos
@@ -45,47 +46,61 @@ class ApiConfig {
   // ========================================
 
   /// Maximum zoom level (higher = more tiles = more requests)
-  /// Zoom 15 = ~25 tiles, Zoom 18 = ~400+ tiles
-  static const double maxMapZoom = 15.0;
+  /// Zoom 18 = street-level detail
+  static const double maxMapZoom = 18.0;
 
-  /// Minimum zoom level
-  static const double minMapZoom = 8.0;
+  /// Minimum zoom level (prevents global zoom out)
+  /// Zoom 10 = city/region level
+  static const double minMapZoom = 10.0;
 
   /// Default zoom level for viewing
-  static const double defaultMapZoom = 12.0;
+  static const double defaultMapZoom = 13.0;
 
   // ========================================
   // 🌍 DISASTER APIS (FREE - No key needed!)
   // ========================================
 
-  /// USGS Earthquake API
+  /// USGS Earthquake API (All earthquakes in last 24h)
   /// FREE - No API key required
-  /// Rate limit: App enforces 1 request per 60 minutes (was 15)
   static const String usgsEarthquakeApi =
+      'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson';
+
+  /// USGS significant earthquakes only (for quick checks)
+  static const String usgsSignificantApi =
       'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_hour.geojson';
 
-  /// USGS all earthquakes (for global view)
-  static const String usgsAllEarthquakesApi =
-      'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson';
-
-  /// NOAA Weather Alerts API
+  /// NOAA Weather Alerts API (US only)
   /// FREE - No API key required
-  /// Rate limit: App enforces 1 request per 60 minutes (was 30)
-  static const String noaaAlertsApi = 'https://api.weather.gov/alerts/active';
+  static const String noaaAlertsApi =
+      'https://api.weather.gov/alerts/active?severity=Severe,Extreme';
+
+  /// GDACS Global Disaster Alert RSS Feed
+  /// FREE - No API key required
+  static const String gdacsRssUrl = 'https://www.gdacs.org/xml/rss.xml';
+
+  /// Google connectivity check URL
+  /// Used for stage-2 SOS auto-unlock verification
+  static const String googlePingUrl = 'https://www.google.com/generate_204';
 
   // ========================================
-  // ⚙️ RATE LIMITS (STRICT!)
+  // ⚙️ RATE LIMITS
   // ========================================
 
-  /// Minimum earthquake magnitude to trigger alert
+  /// Minimum earthquake magnitude to trigger auto-unlock
   static const double minEarthquakeMagnitude = 6.0;
 
-  /// How often to check USGS (minutes) - INCREASED to save quota
-  static const int usgsCheckIntervalMinutes = 60;
+  /// Minimum hurricane category to trigger auto-unlock
+  static const int minHurricaneCategory = 3;
 
-  /// How often to check NOAA (minutes) - INCREASED to save quota
-  static const int noaaCheckIntervalMinutes = 60;
+  /// Minimum tornado EF scale to trigger auto-unlock
+  static const int minTornadoEfScale = 2;
 
-  /// Background check interval (minutes)
-  static const int backgroundCheckIntervalMinutes = 60;
+  /// How often to check each disaster API (minutes)
+  static const int disasterCheckIntervalMinutes = 20;
+
+  /// How often to ping Google for connectivity (minutes)
+  static const int googlePingIntervalMinutes = 5;
+
+  /// Cache expiry time (hours)
+  static const int cacheExpiryHours = 24;
 }

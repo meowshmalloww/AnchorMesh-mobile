@@ -147,6 +147,39 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
               ),
             ],
           ),
+
+          // Zoom Control Buttons
+          Positioned(
+            right: 16,
+            bottom: 100,
+            child: Column(
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'zoomIn',
+                  onPressed: () {
+                    final newZoom = (_zoomNotifier.value + 1).clamp(
+                      ApiConfig.minMapZoom,
+                      ApiConfig.maxMapZoom,
+                    );
+                    _mapController.move(_mapController.camera.center, newZoom);
+                  },
+                  child: const Icon(Icons.add),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: 'zoomOut',
+                  onPressed: () {
+                    final newZoom = (_zoomNotifier.value - 1).clamp(
+                      ApiConfig.minMapZoom,
+                      ApiConfig.maxMapZoom,
+                    );
+                    _mapController.move(_mapController.camera.center, newZoom);
+                  },
+                  child: const Icon(Icons.remove),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

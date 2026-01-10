@@ -352,44 +352,33 @@ class _SOSPageState extends State<SOSPage>
                 ),
               ),
 
-            // WiFi Warning
-            if (_isWifiEnabled)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 4,
-                ),
-                child: _buildWarningBanner(
-                  icon: Icons.wifi_off,
-                  text: "WiFi ON. Turn off for better range.",
-                  color: Colors.blue,
-                ),
-              ),
-
             // Main Content
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  children: [
-                    // Status Selector
-                    _buildStatusSelector(colors, isDark),
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Status Selector
+                      _buildStatusSelector(colors, isDark),
 
-                    const SizedBox(height: 20),
+                      const SizedBox(height: 20),
 
-                    // Giant SOS Button (Custom implementation for this page)
-                    _buildMainSOSButton(colors),
+                      // Giant SOS Button (Custom implementation for this page)
+                      _buildMainSOSButton(colors),
 
-                    const SizedBox(height: 40),
+                      const SizedBox(height: 40),
 
-                    // Stats / Feedback
-                    if (_isBroadcasting)
-                      _buildMeshStats(colors)
-                    else if (_receivedPackets.isNotEmpty)
-                      _buildNearbySignals(colors),
+                      // Stats / Feedback
+                      if (_isBroadcasting)
+                        _buildMeshStats(colors)
+                      else if (_receivedPackets.isNotEmpty)
+                        _buildNearbySignals(colors),
 
-                    const SizedBox(height: 20),
-                  ],
+                      const SizedBox(height: 20),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -483,60 +472,64 @@ class _SOSPageState extends State<SOSPage>
           ),
         ),
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          alignment: WrapAlignment.center,
-          children: SOSStatus.values.where((s) => s != SOSStatus.safe).map((
-            status,
-          ) {
-            final isSelected = _selectedStatus == status;
-            final statusColor = Color(status.colorValue);
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: colors.surfaceElevated,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: colors.meshLine.withAlpha(20)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: SOSStatus.values.where((s) => s != SOSStatus.safe).map((
+              status,
+            ) {
+              final isSelected = _selectedStatus == status;
+              final statusColor = Color(status.colorValue);
 
-            return GestureDetector(
-              onTap: _isBroadcasting
-                  ? null
-                  : () => setState(() => _selectedStatus = status),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? statusColor.withAlpha(isDark ? 50 : 30)
-                      : colors.surfaceElevated,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: isSelected
-                        ? statusColor
-                        : colors.meshLine.withAlpha(50),
-                    width: isSelected ? 2 : 1,
+              return Expanded(
+                child: GestureDetector(
+                  onTap: _isBroadcasting
+                      ? null
+                      : () => setState(() => _selectedStatus = status),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: isSelected ? statusColor : Colors.transparent,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          status.icon,
+                          size: 20,
+                          color: isSelected
+                              ? Colors.white
+                              : colors.textSecondary,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          status.label, // "EMERGENCY" etc
+                          style: TextStyle(
+                            color: isSelected
+                                ? Colors.white
+                                : colors.textSecondary,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 10,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      status.icon,
-                      size: 18,
-                      color: isSelected ? statusColor : colors.textSecondary,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      status.label,
-                      style: TextStyle(
-                        color: isSelected ? statusColor : colors.textSecondary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
+              );
+            }).toList(),
+          ),
         ),
       ],
     );
@@ -838,7 +831,9 @@ class _SOSPageState extends State<SOSPage>
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              isDisaster ? "DISASTER ALERT ACTIVE" : "WARNING ACTIVE",
+              isDisaster
+                  ? "DISASTER ALERT ACTIVE"
+                  : "ALERT: ${_alertLevel.name.toUpperCase()}",
               style: TextStyle(
                 color: color,
                 fontWeight: FontWeight.bold,
