@@ -144,29 +144,36 @@ class _ResQNavBarState extends State<ResQNavBar>
         curve: Curves.easeOutCubic,
         builder: (context, value, child) {
           return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Container(
-              width: 48,
-              height: 48,
-              decoration: ShapeDecoration(
-                color: Color.lerp(colors.accentMuted, colors.accent, value),
-                shape: const CircleBorder(),
-                shadows: [
-                  if (isSelected)
-                    BoxShadow(
-                      color: colors.accent.withAlpha(128),
-                      blurRadius: 8,
-                      spreadRadius: 2,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Transform.scale(
+                  scale: 1.0 + (value * 0.15),
+                  child: Icon(
+                    Icons.emergency,
+                    size: 24,
+                    color: Color.lerp(
+                      colors.textSecondary,
+                      colors.accent,
+                      value,
                     ),
-                ],
-              ),
-              child: Center(
-                child: Icon(
-                  Icons.sos_rounded,
-                  size: 28,
-                  color: Color.lerp(colors.accent, colors.textOnAccent, value),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 4),
+                Text(
+                  'Alert',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: Color.lerp(
+                      colors.textSecondary,
+                      isSelected ? colors.accent : colors.textPrimary,
+                      value,
+                    ),
+                  ),
+                ),
+              ],
             ),
           );
         },

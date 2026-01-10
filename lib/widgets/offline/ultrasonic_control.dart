@@ -23,10 +23,15 @@ class _UltrasonicControlState extends State<UltrasonicControl> {
 
   // Modem Configuration
   static const int sampleRate = 44100;
-  static const double freq0 = 18500.0; // Bit 0
-  static const double freq1 = 19500.0; // Bit 1
+  // Frequencies are now dynamic based on _baseFrequency
+  double get freq0 => _baseFrequency; // Bit 0
+  double get freq1 => _baseFrequency + 1000.0; // Bit 1 (1kHz gap)
   static const double baudRate = 20.0; // Slow but reliable (50ms/bit)
   static const int samplesPerBit = (sampleRate / baudRate) ~/ 1;
+
+  // User-adjustable base frequency (15kHz - 20kHz)
+  double _baseFrequency =
+      17000.0; // Default 17kHz for better speaker compatibility
 
   // State
   bool _isSending = false;
@@ -314,7 +319,12 @@ class _UltrasonicControlState extends State<UltrasonicControl> {
             ],
           ),
 
-          const SizedBox(height: 30),
+          const SizedBox(height: 24),
+
+          // Frequency Slider
+          _buildFrequencySlider(colors),
+
+          const SizedBox(height: 24),
 
           // Visualizer
           if (_isListening) ...[
@@ -487,6 +497,113 @@ class _UltrasonicControlState extends State<UltrasonicControl> {
     header.setUint8(39, 0x61); // data
     header.setUint32(40, dataSize, Endian.little);
     return header.buffer.asUint8List();
+  }
+
+  Widget _buildFrequencySlider(ColorScheme colors) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withAlpha(100),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outline.withAlpha(50)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.tune, size: 18, color: colors.primary),
+              const SizedBox(width: 8),
+              const Text(
+                'Carrier Frequency',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${(_baseFrequency / 1000).toStringAsFixed(1)} kHz',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: colors.primary,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _getFrequencyCompatibilityColor(),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _getFrequencyCompatibilityLabel(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: _baseFrequency,
+            min: 15000.0,
+            max: 20000.0,
+            divisions: 10,
+            label: '${(_baseFrequency / 1000).toStringAsFixed(1)} kHz',
+            onChanged: (_isSending || _isListening)
+                ? null // Disable while active
+                : (value) {
+                    setState(() => _baseFrequency = value);
+                  },
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '15 kHz',
+                style: TextStyle(fontSize: 10, color: colors.onSurfaceVariant),
+              ),
+              Text(
+                '20 kHz',
+                style: TextStyle(fontSize: 10, color: colors.onSurfaceVariant),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Freq0: ${(freq0 / 1000).toStringAsFixed(1)} kHz • Freq1: ${(freq1 / 1000).toStringAsFixed(1)} kHz',
+            style: TextStyle(
+              fontSize: 10,
+              color: colors.onSurfaceVariant,
+              fontFamily: 'monospace',
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Lower = better speaker compatibility, Higher = less audible',
+            style: TextStyle(fontSize: 9, color: colors.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getFrequencyCompatibilityColor() {
+    if (_baseFrequency <= 16000) return Colors.green;
+    if (_baseFrequency <= 18000) return Colors.orange;
+    return Colors.red;
+  }
+
+  String _getFrequencyCompatibilityLabel() {
+    if (_baseFrequency <= 16000) return 'HIGH COMPAT';
+    if (_baseFrequency <= 18000) return 'MEDIUM';
+    return 'LOW COMPAT';
   }
 }
 

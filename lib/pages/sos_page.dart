@@ -9,7 +9,6 @@ import '../services/ble_service.dart';
 import '../services/connectivity_service.dart';
 // import 'dart:ui'; // Unused
 import '../theme/resq_theme.dart';
-import '../painters/mesh_background_painter.dart';
 import '../utils/rssi_calculator.dart';
 // import '../services/connectivity_service.dart'; // Already imported above if needed, check lines 1-10
 
@@ -324,93 +323,78 @@ class _SOSPageState extends State<SOSPage>
 
     return Scaffold(
       backgroundColor: colors.surface,
-      body: Stack(
-        children: [
-          // Mesh background
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: MeshBackground(
-                nodeColor: colors.meshNode,
-                lineColor: colors.meshLine,
-                glowColor: colors.meshGlow,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildTopBar(colors),
+
+            // Alert Banner
+            if (_alertLevel != AlertLevel.peace)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                child: _buildAlertBanner(colors),
+              ),
+
+            // Low Power Warning
+            if (_isLowPowerMode)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 4,
+                ),
+                child: _buildWarningBanner(
+                  icon: Icons.battery_alert,
+                  text: "Low Power Mode ON. Mesh reliability reduced.",
+                  color: Colors.orange,
+                ),
+              ),
+
+            // WiFi Warning
+            if (_isWifiEnabled)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 4,
+                ),
+                child: _buildWarningBanner(
+                  icon: Icons.wifi_off,
+                  text: "WiFi ON. Turn off for better range.",
+                  color: Colors.blue,
+                ),
+              ),
+
+            // Main Content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  children: [
+                    // Status Selector
+                    _buildStatusSelector(colors, isDark),
+
+                    const SizedBox(height: 20),
+
+                    // Giant SOS Button (Custom implementation for this page)
+                    _buildMainSOSButton(colors),
+
+                    const SizedBox(height: 40),
+
+                    // Stats / Feedback
+                    if (_isBroadcasting)
+                      _buildMeshStats(colors)
+                    else if (_receivedPackets.isNotEmpty)
+                      _buildNearbySignals(colors),
+
+                    const SizedBox(height: 20),
+                  ],
+                ),
               ),
             ),
-          ),
-
-          SafeArea(
-            child: Column(
-              children: [
-                _buildTopBar(colors),
-
-                // Alert Banner
-                if (_alertLevel != AlertLevel.peace)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 8,
-                    ),
-                    child: _buildAlertBanner(colors),
-                  ),
-
-                // Low Power Warning
-                if (_isLowPowerMode)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 4,
-                    ),
-                    child: _buildWarningBanner(
-                      icon: Icons.battery_alert,
-                      text: "Low Power Mode ON. Mesh reliability reduced.",
-                      color: Colors.orange,
-                    ),
-                  ),
-
-                // WiFi Warning
-                if (_isWifiEnabled)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 4,
-                    ),
-                    child: _buildWarningBanner(
-                      icon: Icons.wifi_off,
-                      text: "WiFi/Starlink ON. Turn off for better range.",
-                      color: Colors.blue,
-                    ),
-                  ),
-
-                // Main Content
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Column(
-                      children: [
-                        // Status Selector
-                        _buildStatusSelector(colors, isDark),
-
-                        const SizedBox(height: 20),
-
-                        // Giant SOS Button (Custom implementation for this page)
-                        _buildMainSOSButton(colors),
-
-                        const SizedBox(height: 40),
-
-                        // Stats / Feedback
-                        if (_isBroadcasting)
-                          _buildMeshStats(colors)
-                        else if (_receivedPackets.isNotEmpty)
-                          _buildNearbySignals(colors),
-
-                        const SizedBox(height: 20),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

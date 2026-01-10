@@ -61,6 +61,12 @@ class MainActivity : FlutterActivity() {
                         bleManager.testNotification()
                         result.success(true)
                     }
+                    "startRawScan" -> {
+                        result.success(bleManager.startRawScan())
+                    }
+                    "stopRawScan" -> {
+                        result.success(bleManager.stopRawScan())
+                    }
                     else -> {
                         result.notImplemented()
                     }

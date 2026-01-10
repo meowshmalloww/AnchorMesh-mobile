@@ -44,6 +44,8 @@ class BLEService {
   final _verificationController =
       StreamController<VerificationStatus>.broadcast();
   final _handshakeController = StreamController<int>.broadcast();
+  final _rawDeviceController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   // Services
   final PacketStore _packetStore = PacketStore.instance;
@@ -106,6 +108,10 @@ class BLEService {
 
   /// Stream of handshake count updates
   Stream<int> get onHandshakeUpdate => _handshakeController.stream;
+
+  /// Stream of raw BLE devices (for nRF Connect-like scanning)
+  Stream<Map<String, dynamic>> get onRawDeviceFound =>
+      _rawDeviceController.stream;
 
   /// Current connection state
   BLEConnectionState get state => _state;
@@ -288,6 +294,11 @@ class BLEService {
       case 'error':
         if (data is String) {
           _errorController.add(data);
+        }
+        break;
+      case 'rawDeviceFound':
+        if (data is Map) {
+          _rawDeviceController.add(Map<String, dynamic>.from(data));
         }
         break;
     }
@@ -748,6 +759,29 @@ class BLEService {
       final result = await _channel.invokeMethod<bool>('checkWifiStatus');
       return result ?? false;
     } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Start raw BLE scan (nRF Connect-like, no UUID filtering)
+  /// Returns device info via onRawDeviceFound stream
+  Future<bool> startRawScan() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('startRawScan');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      _errorController.add('Failed to start raw scan: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Stop raw BLE scan
+  Future<bool> stopRawScan() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('stopRawScan');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      _errorController.add('Failed to stop raw scan: ${e.message}');
       return false;
     }
   }

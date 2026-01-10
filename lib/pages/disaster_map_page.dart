@@ -4,7 +4,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/disaster_event.dart';
 import '../services/disaster_service.dart';
-import '../config/api_config.dart';
 
 class DisasterMapPage extends StatefulWidget {
   const DisasterMapPage({super.key});
@@ -17,6 +16,9 @@ class _DisasterMapPageState extends State<DisasterMapPage>
     with AutomaticKeepAliveClientMixin {
   final MapController _mapController = MapController();
   final DisasterService _disasterService = DisasterService.instance;
+
+  // Zoom tracking for dynamic marker sizing
+  final ValueNotifier<double> _zoomNotifier = ValueNotifier(2.0);
 
   List<DisasterEvent> _events = [];
   StreamSubscription? _eventSub;
@@ -52,6 +54,7 @@ class _DisasterMapPageState extends State<DisasterMapPage>
   @override
   void dispose() {
     _eventSub?.cancel();
+    _zoomNotifier.dispose();
     super.dispose();
   }
 
@@ -77,160 +80,186 @@ class _DisasterMapPageState extends State<DisasterMapPage>
             IconButton(icon: const Icon(Icons.refresh), onPressed: _fetchData),
         ],
       ),
-      body: FlutterMap(
-        mapController: _mapController,
-        options: MapOptions(
-          initialCenter: const LatLng(0, 0),
-          initialZoom: 2.0,
-          minZoom: 2.0,
-          maxZoom: 18.0,
-          interactionOptions: const InteractionOptions(
-            flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-          ),
-        ),
+      body: Stack(
         children: [
-          TileLayer(
-            urlTemplate: ApiConfig.osmTileUrl,
-            userAgentPackageName: 'com.development.heyblue',
-            keepBuffer: 3, // Keep more tiles in memory relative to screen size
-            panBuffer: 1, // Pre-load tiles around current view
-          ),
-          MarkerLayer(markers: _buildMarkers()),
-        ],
-      ),
-      bottomSheet: DraggableScrollableSheet(
-        initialChildSize: 0.3,
-        minChildSize: 0.1,
-        maxChildSize: 0.6,
-        snap: true,
-        builder: (context, scrollController) {
-          return Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).scaffoldBackgroundColor,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(20),
+          // Map layer
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: const LatLng(20, 0),
+              initialZoom: 2.0,
+              minZoom: 2.0,
+              maxZoom: 18.0,
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withAlpha(20),
-                  blurRadius: 10,
-                  offset: const Offset(0, -5),
-                ),
-              ],
+              onPositionChanged: (position, hasGesture) {
+                // Update zoom notifier for reactive marker sizing
+                _zoomNotifier.value = position.zoom;
+              },
             ),
-            child: Column(
-              children: [
-                Center(
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 12),
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[400],
-                      borderRadius: BorderRadius.circular(2),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.development.heyblue',
+                maxZoom: 18,
+              ),
+              // Zoom-reactive markers
+              ValueListenableBuilder<double>(
+                valueListenable: _zoomNotifier,
+                builder: (context, zoom, _) {
+                  return MarkerLayer(markers: _buildMarkers(zoom));
+                },
+              ),
+            ],
+          ),
+
+          // Event list overlay
+          DraggableScrollableSheet(
+            initialChildSize: 0.3,
+            minChildSize: 0.1,
+            maxChildSize: 0.7,
+            snap: true,
+            snapSizes: const [0.1, 0.3, 0.7],
+            builder: (context, scrollController) {
+              return Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(30),
+                      blurRadius: 10,
+                      offset: const Offset(0, -2),
                     ),
-                  ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.list, size: 20),
-                      const SizedBox(width: 8),
-                      Text(
-                        "Past 24h Events (${_events.length})",
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                child: Column(
+                  children: [
+                    // Drag handle
+                    Center(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 12),
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[400],
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.separated(
-                    controller: scrollController,
-                    itemCount: _events.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1, indent: 64),
-                    itemBuilder: (context, index) {
-                      final event = _events[index];
-                      final style = _getDisasterStyle(event.type);
-                      final timeStr = _formatTime(event.time);
+                    ),
+                    // Header
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.public,
+                            size: 20,
+                            color: Colors.brown,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            "Earthquakes (${_events.length})",
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    // List
+                    Expanded(
+                      child: ListView.builder(
+                        controller: scrollController,
+                        itemCount: _events.length,
+                        itemBuilder: (context, index) {
+                          final event = _events[index];
+                          final style = _getDisasterStyle(event.type);
+                          final timeStr = _formatTime(event.time);
 
-                      return ListTile(
-                        leading: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: style.color.withAlpha(30),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(style.icon, color: style.color, size: 20),
-                        ),
-                        title: Text(
-                          event.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                        ),
-                        subtitle: Text(
-                          "${event.description} • $timeStr",
-                          style: TextStyle(
-                            color: Theme.of(context).textTheme.bodySmall?.color,
-                            fontSize: 12,
-                          ),
-                        ),
-                        onTap: () {
-                          // Move map to location
-                          _mapController.move(
-                            LatLng(event.latitude, event.longitude),
-                            10.0,
+                          return ListTile(
+                            leading: Icon(
+                              style.icon,
+                              color: style.color,
+                              size: 24,
+                            ),
+                            title: Text(
+                              event.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 14,
+                              ),
+                            ),
+                            subtitle: Text(
+                              "${event.description} • $timeStr",
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            dense: true,
+                            onTap: () {
+                              _mapController.move(
+                                LatLng(event.latitude, event.longitude),
+                                8.0,
+                              );
+                            },
                           );
                         },
-                      );
-                    },
-                  ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        },
+              );
+            },
+          ),
+        ],
       ),
     );
   }
 
-  List<Marker> _buildMarkers() {
+  List<Marker> _buildMarkers(double zoom) {
+    // Dynamic marker sizing based on zoom level
+    // At zoom 2 (world view): tiny dots (6px)
+    // At zoom 10+: full size markers (40px)
+    final double markerSize = (6 + (zoom * 3.5)).clamp(6.0, 40.0);
+    final double iconSize = (markerSize * 0.6).clamp(4.0, 24.0);
+
     return _events.map((event) {
       final style = _getDisasterStyle(event.type);
       final severityColor = _getSeverityColor(event.severity);
 
       return Marker(
         point: LatLng(event.latitude, event.longitude),
-        width: 40,
-        height: 40,
+        width: markerSize,
+        height: markerSize,
         child: GestureDetector(
           onTap: () => _showEventDetails(event, style, severityColor),
           child: Container(
             decoration: BoxDecoration(
               color: style.color.withAlpha(200),
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: [
-                BoxShadow(
-                  color: severityColor.withAlpha(128),
-                  blurRadius: 8,
-                  spreadRadius: 2,
-                ),
-              ],
+              border: Border.all(color: Colors.white, width: zoom > 5 ? 2 : 1),
+              boxShadow: zoom > 4
+                  ? [
+                      BoxShadow(
+                        color: severityColor.withAlpha(128),
+                        blurRadius: 4,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
             ),
-            child: Icon(style.icon, color: Colors.white, size: 24),
+            child: zoom > 4
+                ? Icon(style.icon, color: Colors.white, size: iconSize)
+                : null, // No icon at very low zoom for clarity
           ),
         ),
       );
@@ -363,6 +392,8 @@ class _DisasterMapPageState extends State<DisasterMapPage>
         return _DisasterStyle(Icons.volcano, Colors.red);
       case 'tsunami':
         return _DisasterStyle(Icons.tsunami, Colors.teal);
+      case 'weather':
+        return _DisasterStyle(Icons.thunderstorm, Colors.indigo);
       default:
         return _DisasterStyle(Icons.warning, Colors.amber);
     }

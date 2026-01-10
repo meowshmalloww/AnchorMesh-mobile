@@ -51,17 +51,17 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
         centerTitle: true,
         bottom: TabBar(
           controller: _tabController,
-          isScrollable:
-              true, // Re-enable scrollable for 5 tabs on small screens
+          isScrollable: false, // Fit all 5 tabs on screen
+          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
           labelColor: Theme.of(context).brightness == Brightness.dark
               ? Colors.white
               : Colors.black,
           tabs: const [
-            Tab(icon: Icon(Icons.explore), text: "Compass"),
-            Tab(icon: Icon(Icons.navigation), text: "Pointer"),
-            Tab(icon: Icon(Icons.flashlight_on), text: "Strobe"),
-            Tab(icon: Icon(Icons.hearing), text: "Ultrasonic"),
-            Tab(icon: Icon(Icons.radar), text: "Locator"),
+            Tab(icon: Icon(Icons.explore, size: 20), text: "Compass"),
+            Tab(icon: Icon(Icons.navigation, size: 20), text: "Pointer"),
+            Tab(icon: Icon(Icons.flashlight_on, size: 20), text: "Strobe"),
+            Tab(icon: Icon(Icons.hearing, size: 20), text: "Audio"),
+            Tab(icon: Icon(Icons.radar, size: 20), text: "Scan"),
           ],
         ),
       ),

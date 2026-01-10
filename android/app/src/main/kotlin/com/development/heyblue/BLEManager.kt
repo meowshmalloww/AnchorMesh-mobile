@@ -320,7 +320,11 @@ class BLEManager(private val context: Context) {
         // Setup GATT server first
         setupGattServer()
 
-        // Try Extended Advertising features on Android O (API 26+)
+        // DUAL-MODE BROADCASTING: Run BOTH legacy and extended for cross-version compatibility
+        // 1. Always start Legacy Advertising first (works with BLE 4.x AND 5.x devices)
+        val legacyStarted = startLegacyAdvertising()
+        
+        // 2. Additionally start Extended Advertising if supported (for long range)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && supportsBle5()) {
             try {
                 // Extended Advertising parameters (Long Range / Coded PHY)
@@ -347,17 +351,14 @@ class BLEManager(private val context: Context) {
                     advertisingSetCallback
                 )
                 
-                Log.d(TAG, "Attempting Extended Advertising (Coded PHY)...")
-                return true
+                Log.d(TAG, "Started DUAL-MODE: Legacy + Extended Advertising (Coded PHY)")
 
             } catch (e: Exception) {
-                Log.w(TAG, "Extended Advertising failed or not supported: ${e.message}. Falling back to legacy.")
-                // Fallback to legacy
+                Log.w(TAG, "Extended Advertising failed: ${e.message}. Legacy-only mode.")
             }
         }
 
-        // Legacy Advertising Fallback
-        return startLegacyAdvertising()
+        return legacyStarted
     }
 
     private fun startLegacyAdvertising(): Boolean {
@@ -534,6 +535,112 @@ class BLEManager(private val context: Context) {
             return false
         }
     }
+
+    // =====================
+    // RAW BLE Scanner (like nRF Connect)
+    // =====================
+    
+    private var isRawScanning = false
+    private val rawScanResults = mutableMapOf<String, Map<String, Any?>>()
+    
+    private val rawScanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult?) {
+            result?.let { scanResult ->
+                val device = scanResult.device
+                val address = device.address
+                val rssi = scanResult.rssi
+                
+                @Suppress("MissingPermission")
+                val name = device.name ?: "Unknown"
+                
+                // Extract manufacturer data if available
+                val manufacturerData = scanResult.scanRecord?.manufacturerSpecificData
+                val mfgDataList = mutableListOf<Map<String, Any>>()
+                manufacturerData?.let { data ->
+                    for (i in 0 until data.size()) {
+                        val key = data.keyAt(i)
+                        val value = data.valueAt(i)
+                        mfgDataList.add(mapOf("id" to key, "data" to value.toList()))
+                    }
+                }
+                
+                // Check if this is our SOS service
+                val serviceUuids = scanResult.scanRecord?.serviceUuids?.map { it.uuid.toString() } ?: emptyList()
+                val isSOS = serviceUuids.contains(SERVICE_UUID.toString())
+                
+                val deviceInfo = mapOf(
+                    "address" to address,
+                    "name" to name,
+                    "rssi" to rssi,
+                    "isSOS" to isSOS,
+                    "serviceUuids" to serviceUuids,
+                    "manufacturerData" to mfgDataList,
+                    "txPower" to (scanResult.scanRecord?.txPowerLevel ?: -127)
+                )
+                
+                rawScanResults[address] = deviceInfo
+                sendEvent("rawDeviceFound", deviceInfo)
+            }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            isRawScanning = false
+            sendEvent("error", "Raw scan failed with code: $errorCode")
+        }
+    }
+    
+    fun startRawScan(): Boolean {
+        if (!checkBluetoothPermissions()) {
+            sendEvent("error", "Bluetooth permissions not granted")
+            return false
+        }
+
+        val scanner = bluetoothLeScanner
+        if (scanner == null) {
+            sendEvent("error", "BLE scanner not available")
+            return false
+        }
+
+        if (isRawScanning) return true
+        
+        rawScanResults.clear()
+
+        val settingsBuilder = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
+
+        // Enable extended scan on BLE 5.0 devices
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && supportsBle5()) {
+            settingsBuilder.setLegacy(false)
+            settingsBuilder.setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
+        }
+
+        val settings = settingsBuilder.build()
+
+        try {
+            // No filters - scan for ALL devices
+            scanner.startScan(null, settings, rawScanCallback)
+            isRawScanning = true
+            Log.d(TAG, "Started raw BLE scan (all devices)")
+            return true
+        } catch (e: Exception) {
+            sendEvent("error", "Failed to start raw scan: ${e.message}")
+            return false
+        }
+    }
+    
+    fun stopRawScan(): Boolean {
+        try {
+            bluetoothLeScanner?.stopScan(rawScanCallback)
+            isRawScanning = false
+            Log.d(TAG, "Stopped raw BLE scan")
+            return true
+        } catch (e: Exception) {
+            sendEvent("error", "Failed to stop raw scan: ${e.message}")
+            return false
+        }
+    }
+
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {

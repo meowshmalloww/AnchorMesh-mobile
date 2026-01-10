@@ -115,14 +115,76 @@ class DisasterService {
       developer.log('Error fetching USGS: $e');
     }
 
-    // 2. Fetch NOAA (US Only)
+    // 2. Fetch NOAA Severe Weather Alerts (US Only)
     try {
-      // Implementation for NOAA mapping if needed.
-      // NOAA alerts are polygons (complex). For MVP map, I might skip complex polygon parsing
-      // or just use a centroid if provided.
-      // NOAA GeoJSON features have 'geometry' which can be Polygon / MultiPolygon.
-      // I will attempt basic parsing or skip for now to ensure USGS works first.
-      // User asked for "provided ... APIs". I'll add a placeholder or simple fetch.
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 10);
+      final request = await client.getUrl(Uri.parse(noaaApi));
+      request.headers.set('User-Agent', 'ResQ Emergency App');
+      request.headers.set('Accept', 'application/geo+json');
+      final response = await request.close();
+
+      if (response.statusCode == 200) {
+        final body = await response.transform(utf8.decoder).join();
+        final data = jsonDecode(body);
+        final features = data['features'] as List? ?? [];
+
+        for (var f in features) {
+          final props = f['properties'];
+          final geom = f['geometry'];
+
+          // Skip if no geometry or no coordinates
+          if (geom == null) continue;
+
+          // Parse time
+          final effectiveStr = props['effective'];
+          DateTime? time;
+          if (effectiveStr != null) {
+            time = DateTime.tryParse(effectiveStr);
+          }
+          time ??= DateTime.now();
+
+          // Filter > 24 hours
+          if (DateTime.now().difference(time).inHours > 24) continue;
+
+          // Extract representative coordinate (first point of polygon)
+          double? lat;
+          double? lon;
+
+          if (geom['type'] == 'Polygon' && geom['coordinates'] != null) {
+            final ring = geom['coordinates'][0] as List;
+            if (ring.isNotEmpty) {
+              final firstPoint = ring[0] as List;
+              lon = (firstPoint[0] as num).toDouble();
+              lat = (firstPoint[1] as num).toDouble();
+            }
+          } else if (geom['type'] == 'Point' && geom['coordinates'] != null) {
+            final coords = geom['coordinates'] as List;
+            lon = (coords[0] as num).toDouble();
+            lat = (coords[1] as num).toDouble();
+          }
+
+          // Skip if no valid coordinates
+          if (lat == null || lon == null) continue;
+
+          final severity = props['severity'] ?? 'Unknown';
+          final eventType = props['event'] ?? 'Weather Alert';
+
+          newEvents.add(
+            DisasterEvent(
+              id: props['id'] ?? 'noaa_${newEvents.length}',
+              type: 'weather',
+              title: eventType,
+              description: props['headline'] ?? eventType,
+              severity: severity == 'Extreme' ? 'High' : 'Medium',
+              time: time,
+              latitude: lat,
+              longitude: lon,
+              sourceUrl: props['web'],
+            ),
+          );
+        }
+      }
     } catch (e) {
       developer.log('Error fetching NOAA: $e');
     }
