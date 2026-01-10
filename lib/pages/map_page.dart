@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -6,6 +7,7 @@ import '../models/sos_packet.dart';
 import '../models/sos_status.dart';
 import '../services/ble_service.dart';
 import '../config/api_config.dart';
+import '../theme/resq_theme.dart';
 
 /// Map page with SOS heatmap visualization
 /// Supports 3 zoom levels:
@@ -86,19 +88,14 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final colors = context.resq;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final topPadding = MediaQuery.of(context).padding.top;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("SOS Map"),
-        actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadPackets),
-          IconButton(
-            icon: const Icon(Icons.my_location),
-            onPressed: _centerOnPackets,
-          ),
-        ],
-      ),
       body: Stack(
         children: [
+          // Full-screen map
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -146,6 +143,48 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
                 },
               ),
             ],
+          ),
+
+          // Floating action buttons (top right)
+          Positioned(
+            top: topPadding + 12,
+            right: 12,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: colors.surfaceElevated.withAlpha(isDark ? 140 : 180),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: colors.meshLine.withAlpha(76),
+                      width: 0.5,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.refresh, color: colors.textPrimary),
+                        onPressed: _loadPackets,
+                        tooltip: 'Refresh',
+                      ),
+                      Container(
+                        height: 1,
+                        width: 24,
+                        color: colors.meshLine.withAlpha(50),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.my_location, color: colors.textPrimary),
+                        onPressed: _centerOnPackets,
+                        tooltip: 'Center',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),

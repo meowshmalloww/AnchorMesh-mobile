@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../services/ble_service.dart';
 import '../services/connectivity_service.dart' hide AlertLevel;
@@ -74,138 +75,174 @@ class _HomePageState extends State<HomePage>
   @override
   Widget build(BuildContext context) {
     final colors = context.resq;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final topPadding = MediaQuery.of(context).padding.top;
+    const topBarHeight = 90.0;
 
     return Scaffold(
       backgroundColor: colors.surface,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Top bar
-            _buildTopBar(colors),
-
-            // Alert banner
-            if (_alertLevel != AlertLevel.peace)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                child: _buildAlertBanner(colors),
-              ),
-
-            // Status pills
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _buildStatusRow(colors),
-            ),
-
-            const Spacer(),
-
-            // Placeholder or Info Text instead of SOS Button
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.shield_outlined,
-                    size: 64,
-                    color: colors.textSecondary.withAlpha(50),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'SYSTEM READY',
-                    style: TextStyle(
-                      color: colors.textSecondary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const Spacer(),
-
-            // Bottom action card
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-              child: _buildDisasterCard(colors),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar(ResQColors colors) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-      child: Row(
+      body: Stack(
         children: [
-          // Logo / Title
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'ResQ',
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -1,
-                ),
-              ),
-              Text(
-                'MESH NETWORK',
-                style: TextStyle(
-                  color: colors.textSecondary,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 2,
-                ),
-              ),
-            ],
-          ),
-
-          const Spacer(),
-
-          // Connection indicator
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: ShapeDecoration(
-              color: _isOnline
-                  ? colors.statusOnline.withAlpha(38)
-                  : colors.statusOffline.withAlpha(38),
-              shape: const PillChamferBorder(chamferSize: 4),
+          // Scrollable content
+          SingleChildScrollView(
+            padding: EdgeInsets.only(
+              top: topPadding + topBarHeight,
+              bottom: 120,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+            child: Column(
               children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _isOnline
-                        ? colors.statusOnline
-                        : colors.statusOffline,
+                // Alert banner
+                if (_alertLevel != AlertLevel.peace)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: _buildAlertBanner(colors),
+                  ),
+
+                // Status pills
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: _buildStatusRow(colors),
+                ),
+
+                const SizedBox(height: 80),
+
+                // Placeholder or Info Text
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.shield_outlined,
+                        size: 64,
+                        color: colors.textSecondary.withAlpha(50),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'SYSTEM READY',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  _isOnline ? 'ONLINE' : 'OFFLINE',
-                  style: TextStyle(
-                    color: _isOnline
-                        ? colors.statusOnline
-                        : colors.statusOffline,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1,
-                  ),
+
+                const SizedBox(height: 80),
+
+                // Bottom action card
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  child: _buildDisasterCard(colors),
                 ),
               ],
             ),
           ),
+
+          // Frosted top bar
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                child: Container(
+                  padding: EdgeInsets.only(
+                    top: topPadding + 16,
+                    left: 20,
+                    right: 20,
+                    bottom: 20,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceElevated.withAlpha(isDark ? 115 : 140),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: colors.meshLine.withAlpha(76),
+                        width: 0.5,
+                      ),
+                    ),
+                  ),
+                  child: _buildTopBarContent(colors),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTopBarContent(ResQColors colors) {
+    return Row(
+      children: [
+        // Logo / Title
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'ResQ',
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 28,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -1,
+              ),
+            ),
+            Text(
+              'MESH NETWORK',
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 2,
+              ),
+            ),
+          ],
+        ),
+
+        const Spacer(),
+
+        // Connection indicator
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: ShapeDecoration(
+            color: _isOnline
+                ? colors.statusOnline.withAlpha(38)
+                : colors.statusOffline.withAlpha(38),
+            shape: const PillChamferBorder(chamferSize: 4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _isOnline
+                      ? colors.statusOnline
+                      : colors.statusOffline,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _isOnline ? 'ONLINE' : 'OFFLINE',
+                style: TextStyle(
+                  color: _isOnline
+                      ? colors.statusOnline
+                      : colors.statusOffline,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -7,7 +8,6 @@ import '../models/sos_packet.dart';
 import '../models/sos_status.dart';
 import '../services/ble_service.dart';
 import '../services/connectivity_service.dart';
-// import 'dart:ui'; // Unused
 import '../theme/resq_theme.dart';
 import '../utils/rssi_calculator.dart';
 // import '../services/connectivity_service.dart'; // Already imported above if needed, check lines 1-10
@@ -320,153 +320,172 @@ class _SOSPageState extends State<SOSPage>
   Widget build(BuildContext context) {
     final colors = context.resq;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final topPadding = MediaQuery.of(context).padding.top;
+    const topBarHeight = 70.0;
 
     return Scaffold(
       backgroundColor: colors.surface,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(colors),
-
-            // Alert Banner
-            if (_alertLevel != AlertLevel.peace)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 8,
-                ),
-                child: _buildAlertBanner(colors),
-              ),
-
-            // Low Power Warning
-            if (_isLowPowerMode)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 4,
-                ),
-                child: _buildWarningBanner(
-                  icon: Icons.battery_alert,
-                  text: "Low Power Mode ON. Mesh reliability reduced.",
-                  color: Colors.orange,
-                ),
-              ),
-
-            // WiFi Warning
-            if (_isWifiEnabled)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 4,
-                ),
-                child: _buildWarningBanner(
-                  icon: Icons.wifi_off,
-                  text: "WiFi ON. Turn off for better range.",
-                  color: Colors.blue,
-                ),
-              ),
-
-            // Main Content
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  children: [
-                    // Status Selector
-                    _buildStatusSelector(colors, isDark),
-
-                    const SizedBox(height: 20),
-
-                    // Giant SOS Button (Custom implementation for this page)
-                    _buildMainSOSButton(colors),
-
-                    const SizedBox(height: 40),
-
-                    // Stats / Feedback
-                    if (_isBroadcasting)
-                      _buildMeshStats(colors)
-                    else if (_receivedPackets.isNotEmpty)
-                      _buildNearbySignals(colors),
-
-                    const SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar(ResQColors colors) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      body: Stack(
         children: [
-          Row(
-            children: [
-              Icon(Icons.shield_outlined, color: colors.accent, size: 24),
-              const SizedBox(width: 12),
-              Text(
-                'EMERGENCY',
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 3,
-                ),
-              ),
-            ],
+          // Scrollable content
+          SingleChildScrollView(
+            padding: EdgeInsets.only(
+              top: topPadding + topBarHeight + 8,
+              left: 20,
+              right: 20,
+              bottom: 120,
+            ),
+            child: Column(
+              children: [
+                // Alert Banner
+                if (_alertLevel != AlertLevel.peace)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _buildAlertBanner(colors),
+                  ),
+
+                // Low Power Warning
+                if (_isLowPowerMode)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: _buildWarningBanner(
+                      icon: Icons.battery_alert,
+                      text: "Low Power Mode ON. Mesh reliability reduced.",
+                      color: Colors.orange,
+                    ),
+                  ),
+
+                // WiFi Warning
+                if (_isWifiEnabled)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: _buildWarningBanner(
+                      icon: Icons.wifi_off,
+                      text: "WiFi ON. Turn off for better range.",
+                      color: Colors.blue,
+                    ),
+                  ),
+
+                // Status Selector
+                _buildStatusSelector(colors, isDark),
+
+                const SizedBox(height: 20),
+
+                // Giant SOS Button
+                _buildMainSOSButton(colors),
+
+                const SizedBox(height: 40),
+
+                // Stats / Feedback
+                if (_isBroadcasting)
+                  _buildMeshStats(colors)
+                else if (_receivedPackets.isNotEmpty)
+                  _buildNearbySignals(colors),
+
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
 
-          // Connection Status
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: ShapeDecoration(
-              color: _bleState == BLEConnectionState.meshActive
-                  ? colors.statusOnline.withAlpha(30)
-                  : colors.surfaceElevated,
-              shape: const StadiumBorder(),
-              shadows: [
-                if (_bleState == BLEConnectionState.meshActive)
-                  BoxShadow(
-                    color: colors.statusOnline.withAlpha(50),
-                    blurRadius: 10,
+          // Frosted top bar
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                child: Container(
+                  padding: EdgeInsets.only(
+                    top: topPadding + 16,
+                    left: 20,
+                    right: 20,
+                    bottom: 10,
                   ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
                   decoration: BoxDecoration(
-                    color: _bleState == BLEConnectionState.meshActive
-                        ? colors.statusOnline
-                        : colors.textSecondary,
-                    shape: BoxShape.circle,
+                    color: colors.surfaceElevated.withAlpha(isDark ? 115 : 140),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: colors.meshLine.withAlpha(76),
+                        width: 0.5,
+                      ),
+                    ),
                   ),
+                  child: _buildTopBarContent(colors),
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  _bleState == BLEConnectionState.meshActive
-                      ? 'MESH ACTIVE'
-                      : 'STANDBY',
-                  style: TextStyle(
-                    color: _bleState == BLEConnectionState.meshActive
-                        ? colors.statusOnline
-                        : colors.textSecondary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTopBarContent(ResQColors colors) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.shield_outlined, color: colors.accent, size: 24),
+            const SizedBox(width: 12),
+            Text(
+              'EMERGENCY',
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 3,
+              ),
+            ),
+          ],
+        ),
+
+        // Connection Status
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: ShapeDecoration(
+            color: _bleState == BLEConnectionState.meshActive
+                ? colors.statusOnline.withAlpha(30)
+                : colors.surfaceElevated.withAlpha(128),
+            shape: const StadiumBorder(),
+            shadows: [
+              if (_bleState == BLEConnectionState.meshActive)
+                BoxShadow(
+                  color: colors.statusOnline.withAlpha(50),
+                  blurRadius: 10,
+                ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: _bleState == BLEConnectionState.meshActive
+                      ? colors.statusOnline
+                      : colors.textSecondary,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _bleState == BLEConnectionState.meshActive
+                    ? 'MESH ACTIVE'
+                    : 'STANDBY',
+                style: TextStyle(
+                  color: _bleState == BLEConnectionState.meshActive
+                      ? colors.statusOnline
+                      : colors.textSecondary,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

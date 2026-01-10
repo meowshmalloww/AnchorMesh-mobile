@@ -61,6 +61,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       backgroundColor: colors.surface,
+      extendBody: true,
       body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: ResQNavBar(
         selectedIndex: _selectedIndex,

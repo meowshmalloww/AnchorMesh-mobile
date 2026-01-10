@@ -1,10 +1,12 @@
 // ignore_for_file: subtype_of_sealed_class, deprecated_member_use, experimental_member_use
 import 'dart:math' as math;
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 
 import '../widgets/offline/strobe_control.dart';
 import '../widgets/offline/ultrasonic_control.dart';
+import '../theme/resq_theme.dart';
 import 'signal_locator_page.dart';
 import 'compass_pointer_page.dart';
 
@@ -45,34 +47,60 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.resq;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final topPadding = MediaQuery.of(context).padding.top;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Utilities"),
-        centerTitle: true,
-        bottom: TabBar(
-          controller: _tabController,
-          isScrollable: false, // Fit all 5 tabs on screen
-          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-          labelColor: Theme.of(context).brightness == Brightness.dark
-              ? Colors.white
-              : Colors.black,
-          tabs: const [
-            Tab(icon: Icon(Icons.explore, size: 20), text: "Compass"),
-            Tab(icon: Icon(Icons.navigation, size: 20), text: "Pointer"),
-            Tab(icon: Icon(Icons.flashlight_on, size: 20), text: "Strobe"),
-            Tab(icon: Icon(Icons.hearing, size: 20), text: "Audio"),
-            Tab(icon: Icon(Icons.radar, size: 20), text: "Scan"),
-          ],
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
         children: [
-          _buildCompassTab(),
-          const CompassPointerPage(),
-          const StrobeControl(),
-          const UltrasonicControl(),
-          const SignalLocatorPage(),
+          // Minimal frosted tab bar
+          ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+              child: Container(
+                padding: EdgeInsets.only(top: topPadding),
+                decoration: BoxDecoration(
+                  color: colors.surfaceElevated.withAlpha(isDark ? 115 : 140),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: colors.meshLine.withAlpha(76),
+                      width: 0.5,
+                    ),
+                  ),
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: false,
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  labelColor: colors.textPrimary,
+                  unselectedLabelColor: colors.textSecondary,
+                  indicatorColor: colors.accentSecondary,
+                  tabs: const [
+                    Tab(icon: Icon(Icons.explore, size: 20), text: "Compass"),
+                    Tab(icon: Icon(Icons.navigation, size: 20), text: "Pointer"),
+                    Tab(icon: Icon(Icons.flashlight_on, size: 20), text: "Strobe"),
+                    Tab(icon: Icon(Icons.hearing, size: 20), text: "Audio"),
+                    Tab(icon: Icon(Icons.radar, size: 20), text: "Scan"),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // Tab content
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildCompassTab(),
+                const CompassPointerPage(),
+                const StrobeControl(),
+                const UltrasonicControl(),
+                const SignalLocatorPage(),
+              ],
+            ),
+          ),
         ],
       ),
     );

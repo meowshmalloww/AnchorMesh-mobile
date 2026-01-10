@@ -53,7 +53,7 @@ class _ResQNavBarState extends State<ResQNavBar>
           child: Container(
             height: 70,
             decoration: BoxDecoration(
-              color: colors.surfaceElevated.withAlpha(isDark ? 204 : 230),
+              color: colors.surfaceElevated.withAlpha(isDark ? 115 : 140),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: colors.meshLine.withAlpha(128),
@@ -162,7 +162,7 @@ class _ResQNavBarState extends State<ResQNavBar>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Alert',
+                  'SOS',
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
