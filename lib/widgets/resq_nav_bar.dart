@@ -45,7 +45,7 @@ class _ResQNavBarState extends State<ResQNavBar>
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: ClipPath(
         clipper: _NavBarClipper(),
         child: BackdropFilter(

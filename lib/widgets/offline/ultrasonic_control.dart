@@ -361,7 +361,7 @@ class _UltrasonicControlState extends State<UltrasonicControl> {
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: colors.surfaceVariant,
+              color: Colors.black12, // Changed from surfaceVariant (pink)
               borderRadius: BorderRadius.circular(12),
             ),
             child: ListView.builder(

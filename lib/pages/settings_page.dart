@@ -159,6 +159,46 @@ class _SettingsPageState extends State<SettingsPage> {
 
           const SizedBox(height: 12),
 
+          // Offline Resources Section
+          _buildSectionCard(
+            title: 'Offline Resources',
+            icon: Icons.offline_pin,
+            iconColor: Colors.blue,
+            children: [
+              ListTile(
+                title: const Text('Download Maps'),
+                subtitle: const Text('Save map regions for offline use'),
+                leading: const Icon(Icons.download),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const RegionSelectionPage(),
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                title: const Text('Packet History'),
+                subtitle: const Text('View alert message logs'),
+                leading: const Icon(Icons.history),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AlertsHistoryPage(),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
           // BLE Version Section
           _buildSectionCard(
             title: 'Bluetooth',

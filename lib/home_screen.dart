@@ -47,14 +47,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  List<Widget> get _pages => [
-    HomePage(onTabChange: _onItemTapped),
-    const MapPage(),
-    const OfflineUtilityPage(),
-    const SOSPage(),
-    const SettingsPage(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     final colors = context.resq;
@@ -62,11 +54,28 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: colors.surface,
       extendBody: true,
-      body: IndexedStack(index: _selectedIndex, children: _pages),
+      body: _buildPage(_selectedIndex),
       bottomNavigationBar: ResQNavBar(
         selectedIndex: _selectedIndex,
         onItemSelected: _onItemTapped,
       ),
     );
+  }
+
+  Widget _buildPage(int index) {
+    switch (index) {
+      case 0:
+        return HomePage(onTabChange: _onItemTapped);
+      case 1:
+        return const MapPage();
+      case 2:
+        return const OfflineUtilityPage();
+      case 3:
+        return const SOSPage();
+      case 4:
+        return const SettingsPage();
+      default:
+        return HomePage(onTabChange: _onItemTapped);
+    }
   }
 }

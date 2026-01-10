@@ -24,6 +24,27 @@ class _DisasterMapPageState extends State<DisasterMapPage>
   StreamSubscription? _eventSub;
   bool _isLoading = false;
 
+  // Selected event for danger zone display
+  DisasterEvent? _selectedEvent;
+
+  // Filters
+  final Set<String> _selectedFilters = {'all'};
+  final List<String> _filterOptions = [
+    'all',
+    'earthquake',
+    'fire',
+    'flood',
+    'hurricane',
+    'tornado',
+    'weather',
+    'volcano',
+  ];
+
+  List<DisasterEvent> get _filteredEvents {
+    if (_selectedFilters.contains('all')) return _events;
+    return _events.where((e) => _selectedFilters.contains(e.type)).toList();
+  }
+
   @override
   bool get wantKeepAlive => true; // Keep map state alive
 
@@ -40,7 +61,9 @@ class _DisasterMapPageState extends State<DisasterMapPage>
   void _setupListener() {
     _eventSub = _disasterService.eventsStream.listen((events) {
       if (mounted) {
-        setState(() => _events = events);
+        setState(() {
+          _events = events;
+        });
       }
     });
   }
@@ -82,13 +105,31 @@ class _DisasterMapPageState extends State<DisasterMapPage>
       ),
       body: Stack(
         children: [
+          // Loading overlay (shows while fetching)
+          if (_isLoading)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Colors.white),
+                    SizedBox(height: 16),
+                    Text(
+                      'Loading global disaster data...',
+                      style: TextStyle(color: Colors.white, fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           // Map layer
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: const LatLng(20, 0),
-              initialZoom: 2.0,
-              minZoom: 2.0,
+              initialCenter: const LatLng(20, 0), // World center
+              initialZoom: 2.0, // Start global to show all alerts
+              minZoom: 2.0, // Allow global view
               maxZoom: 18.0,
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
@@ -104,23 +145,42 @@ class _DisasterMapPageState extends State<DisasterMapPage>
                 userAgentPackageName: 'com.development.heyblue',
                 maxZoom: 18,
               ),
-              // Zoom-reactive markers
               ValueListenableBuilder<double>(
                 valueListenable: _zoomNotifier,
                 builder: (context, zoom, _) {
                   return MarkerLayer(markers: _buildMarkers(zoom));
                 },
               ),
+              // Danger Zone Circle (when event selected)
+              if (_selectedEvent != null)
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: LatLng(
+                        _selectedEvent!.latitude,
+                        _selectedEvent!.longitude,
+                      ),
+                      radius: _getDangerRadius(_selectedEvent!),
+                      useRadiusInMeter: true,
+                      color: Colors.red.withAlpha(50),
+                      borderColor: Colors.red,
+                      borderStrokeWidth: 2,
+                    ),
+                  ],
+                ),
             ],
           ),
 
+          // Filter Bar
+          Positioned(top: 10, left: 10, right: 10, child: _buildFilterBar()),
+
           // Event list overlay
           DraggableScrollableSheet(
-            initialChildSize: 0.3,
+            initialChildSize: 0.4,
             minChildSize: 0.1,
-            maxChildSize: 0.7,
+            maxChildSize: 0.9,
             snap: true,
-            snapSizes: const [0.1, 0.3, 0.7],
+            snapSizes: const [0.1, 0.4, 0.9],
             builder: (context, scrollController) {
               return Container(
                 decoration: BoxDecoration(
@@ -158,14 +218,14 @@ class _DisasterMapPageState extends State<DisasterMapPage>
                       ),
                       child: Row(
                         children: [
-                          const Icon(
-                            Icons.public,
+                          Icon(
+                            _getHeaderIcon(),
                             size: 20,
-                            color: Colors.brown,
+                            color: _getHeaderColor(),
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            "Earthquakes (${_events.length})",
+                            "${_getHeaderTitle()} (${_filteredEvents.length})",
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
@@ -179,9 +239,9 @@ class _DisasterMapPageState extends State<DisasterMapPage>
                     Expanded(
                       child: ListView.builder(
                         controller: scrollController,
-                        itemCount: _events.length,
+                        itemCount: _filteredEvents.length,
                         itemBuilder: (context, index) {
-                          final event = _events[index];
+                          final event = _filteredEvents[index];
                           final style = _getDisasterStyle(event.type);
                           final timeStr = _formatTime(event.time);
 
@@ -220,9 +280,188 @@ class _DisasterMapPageState extends State<DisasterMapPage>
               );
             },
           ),
+
+          // Zoom Control Buttons
+          Positioned(
+            right: 16,
+            top: 60,
+            child: Column(
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'disasterZoomIn',
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black87,
+                  onPressed: () {
+                    final newZoom = (_zoomNotifier.value + 1).clamp(2.0, 18.0);
+                    _mapController.move(_mapController.camera.center, newZoom);
+                  },
+                  child: const Icon(Icons.add),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: 'disasterZoomOut',
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black87,
+                  onPressed: () {
+                    final newZoom = (_zoomNotifier.value - 1).clamp(2.0, 18.0);
+                    _mapController.move(_mapController.camera.center, newZoom);
+                  },
+                  child: const Icon(Icons.remove),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  // Dynamic header helpers based on filter selection
+  String _getHeaderTitle() {
+    if (_selectedFilters.contains('all') || _selectedFilters.length > 1) {
+      return 'All Events';
+    }
+    final filter = _selectedFilters.first;
+    switch (filter) {
+      case 'earthquake':
+        return 'Earthquakes';
+      case 'fire':
+        return 'Fires';
+      case 'flood':
+        return 'Floods';
+      case 'hurricane':
+        return 'Hurricanes';
+      case 'tornado':
+        return 'Tornadoes';
+      case 'weather':
+        return 'Weather Alerts';
+      case 'volcano':
+        return 'Volcanoes';
+      default:
+        return 'Events';
+    }
+  }
+
+  IconData _getHeaderIcon() {
+    if (_selectedFilters.contains('all') || _selectedFilters.length > 1) {
+      return Icons.public;
+    }
+    final filter = _selectedFilters.first;
+    switch (filter) {
+      case 'earthquake':
+        return Icons.public;
+      case 'fire':
+        return Icons.local_fire_department;
+      case 'flood':
+        return Icons.water;
+      case 'hurricane':
+        return Icons.cyclone;
+      case 'tornado':
+        return Icons.tornado;
+      case 'weather':
+        return Icons.cloud;
+      case 'volcano':
+        return Icons.volcano;
+      default:
+        return Icons.warning;
+    }
+  }
+
+  Color _getHeaderColor() {
+    if (_selectedFilters.contains('all') || _selectedFilters.length > 1) {
+      return Colors.brown;
+    }
+    final filter = _selectedFilters.first;
+    switch (filter) {
+      case 'earthquake':
+        return Colors.red;
+      case 'fire':
+        return Colors.red.shade900;
+      case 'flood':
+        return Colors.blue;
+      case 'hurricane':
+        return Colors.purple;
+      case 'tornado':
+        return Colors.grey;
+      case 'weather':
+        return Colors.orange;
+      case 'volcano':
+        return Colors.deepOrange;
+      default:
+        return Colors.brown;
+    }
+  }
+
+  // Calculate danger radius in meters using realistic estimates
+  // Sources: USGS, NOAA, FEMA typical impact zones
+  double _getDangerRadius(DisasterEvent event) {
+    switch (event.type.toLowerCase()) {
+      case 'earthquake':
+        // Realistic felt intensity radius based on magnitude
+        // Mag 3: ~15km, Mag 4: ~30km, Mag 5: ~50km,
+        // Mag 6: ~100km, Mag 7: ~150km, Mag 8+: ~300km
+        final mag = event.magnitude ?? 4.0;
+        if (mag < 3.0) return 10000.0; // 10km
+        if (mag < 4.0) return 15000.0; // 15km
+        if (mag < 5.0) return 30000.0; // 30km
+        if (mag < 6.0) return 50000.0; // 50km
+        if (mag < 7.0) return 100000.0; // 100km
+        if (mag < 8.0) return 150000.0; // 150km
+        return 300000.0; // 300km for 8+
+
+      case 'hurricane':
+        // Tropical storm wind radius (not just eye)
+        // Cat 1: 50km, Cat 2: 70km, Cat 3: 100km, Cat 4: 130km, Cat 5: 160km
+        final cat = event.category ?? 1;
+        return [
+          50000.0,
+          70000.0,
+          100000.0,
+          130000.0,
+          160000.0,
+        ][cat.clamp(1, 5) - 1];
+
+      case 'tornado':
+        // Tornado damage path width (more realistic)
+        // EF0: 50m, EF1: 100m, EF2: 250m, EF3: 500m, EF4: 1km, EF5: 2km
+        final ef = event.efScale ?? 1;
+        return [50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0][ef.clamp(0, 5)];
+
+      case 'fire':
+      case 'wildfire':
+        // Wildfire evacuation zone - varies greatly
+        return _getSeverityRadius(event.severity, 3000.0); // 3km base
+
+      case 'flood':
+        // Flood zone - highly variable by terrain
+        return _getSeverityRadius(event.severity, 5000.0); // 5km base
+
+      case 'volcano':
+        // Volcanic exclusion zone
+        return _getSeverityRadius(event.severity, 10000.0); // 10km base
+
+      default:
+        return _getSeverityRadius(event.severity, 5000.0); // 5km default
+    }
+  }
+
+  // Helper for severity-based radius scaling
+  double _getSeverityRadius(String severity, double baseRadius) {
+    switch (severity.toLowerCase()) {
+      case 'extreme':
+        return baseRadius * 2.5;
+      case 'severe':
+      case 'high':
+        return baseRadius * 1.8;
+      case 'moderate':
+      case 'medium':
+        return baseRadius * 1.2;
+      case 'minor':
+      case 'low':
+        return baseRadius * 0.6;
+      default:
+        return baseRadius;
+    }
   }
 
   List<Marker> _buildMarkers(double zoom) {
@@ -232,7 +471,7 @@ class _DisasterMapPageState extends State<DisasterMapPage>
     final double markerSize = (6 + (zoom * 3.5)).clamp(6.0, 40.0);
     final double iconSize = (markerSize * 0.6).clamp(4.0, 24.0);
 
-    return _events.map((event) {
+    return _filteredEvents.map((event) {
       final style = _getDisasterStyle(event.type);
       final severityColor = _getSeverityColor(event.severity);
 
@@ -241,7 +480,10 @@ class _DisasterMapPageState extends State<DisasterMapPage>
         width: markerSize,
         height: markerSize,
         child: GestureDetector(
-          onTap: () => _showEventDetails(event, style, severityColor),
+          onTap: () {
+            setState(() => _selectedEvent = event);
+            _showEventDetails(event, style, severityColor);
+          },
           child: Container(
             decoration: BoxDecoration(
               color: style.color.withAlpha(200),
@@ -377,7 +619,7 @@ class _DisasterMapPageState extends State<DisasterMapPage>
   _DisasterStyle _getDisasterStyle(String type) {
     switch (type.toLowerCase()) {
       case 'earthquake':
-        return _DisasterStyle(Icons.public, Colors.brown);
+        return _DisasterStyle(Icons.public, Colors.red); // User requested Red
       case 'flood':
         return _DisasterStyle(Icons.water, Colors.blue);
       case 'hurricane':
@@ -387,9 +629,12 @@ class _DisasterMapPageState extends State<DisasterMapPage>
         return _DisasterStyle(Icons.tornado, Colors.grey);
       case 'wildfire':
       case 'fire':
-        return _DisasterStyle(Icons.local_fire_department, Colors.orange);
+        return _DisasterStyle(
+          Icons.local_fire_department,
+          const Color(0xFF8B0000),
+        ); // Dark Red
       case 'volcano':
-        return _DisasterStyle(Icons.volcano, Colors.red);
+        return _DisasterStyle(Icons.volcano, Colors.deepOrange);
       case 'tsunami':
         return _DisasterStyle(Icons.tsunami, Colors.teal);
       case 'weather':
@@ -410,8 +655,59 @@ class _DisasterMapPageState extends State<DisasterMapPage>
       case 'low':
         return Colors.green;
       default:
-        return Colors.blueGrey;
+        return Colors.grey;
     }
+  }
+
+  Widget _buildFilterBar() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: _filterOptions.map((filter) {
+          final isSelected = _selectedFilters.contains(filter);
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              label: Text(
+                filter == 'all'
+                    ? 'All'
+                    : filter[0].toUpperCase() + filter.substring(1),
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.black87,
+                  fontSize: 12,
+                ),
+              ),
+              selected: isSelected,
+              onSelected: (selected) {
+                setState(() {
+                  if (filter == 'all') {
+                    _selectedFilters.clear();
+                    _selectedFilters.add('all');
+                  } else {
+                    _selectedFilters.remove('all');
+                    if (selected) {
+                      _selectedFilters.add(filter);
+                    } else {
+                      _selectedFilters.remove(filter);
+                      if (_selectedFilters.isEmpty) {
+                        _selectedFilters.add('all');
+                      }
+                    }
+                  }
+                });
+              },
+              backgroundColor: Colors.white.withAlpha(200),
+              selectedColor: Colors.deepOrange,
+              checkmarkColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide.none,
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
   }
 }
 
