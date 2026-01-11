@@ -1,20 +1,24 @@
-MITIGATION LICENSE - EVALUATION ONLY
+HACKATHON EVALUATION LICENSE
 
-Copyright (c) 2026 ResQ Team. All Rights Reserved.
+Copyright (c) 2026 AnchorMesh Team. All Rights Reserved.
 
-NOTICE TO ALL USERS:
+TERMS AND CONDITIONS
 
-This software is the intellectual property of the ResQ Team. It is provided specifically for the purpose of HACKATHON EVALUATION and JUDGING only.
+1. PURPOSE
+   This software is submitted for evaluation in the 2025 Alameda Hackathon. It is provided solely for the purposes of judging, testing, and reviewing functionality during the event period.
 
-1. PERMISSIONS
-   - You may view, compile, and run this code on personal devices for the sole purpose of evaluating its functionality and code quality.
-   - You may demonstrate this software to others for the purpose of judging or feedback.
+2. GRANTED RIGHTS
+   You are hereby granted permission to:
+   - READ the source code for evaluation purposes.
+   - RUN the compiled application on devices for testing purposes.
+   - TEST the functionality of the software as intended.
 
-2. RESTRICTIONS
-   - You may NOT redistribute, sell, sub-license, or rent this software or any part of its source code.
-   - You may NOT use this code for any commercial purpose.
-   - You may NOT modify, fork, or create derivative works from this code without express written permission from the copyright holders.
-   - You may NOT remove this license notice from any copies of the software.
+3. RESTRICTIONS
+   You are strictly PROHIBITED from:
+   - COPYING any part of this source code for use in other projects.
+   - MODIFYING the source code or creating derivative works.
+   - REDISTRIBUTING this software in source or binary form.
+   - USING this software for any commercial purpose.
 
-3. NO WARRANTY
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY.
+4. NO WARRANTY
+   THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. THE AUTHORS MAKE NO REPRESENTATIONS OR WARRANTIES OF ANY KIND CONCERNING THE SAFETY, SUITABILITY, LACK OF VIRUSES, INACCURACIES, TYPOGRAPHICAL ERRORS, OR OTHER HARMFUL COMPONENTS OF THIS SOFTWARE.

@@ -40,7 +40,7 @@ class ApiConfig {
   static bool get hasMapTiler => mapTilerApiKey.isNotEmpty && useMapTiler;
 
   // ========================================
-  // 🗺️ MAP LIMITS (to conserve requests)
+  // 🗺️ MAP LIMITS
   // ========================================
 
   /// Maximum zoom level (higher = more tiles = more requests)
@@ -55,7 +55,7 @@ class ApiConfig {
   static const double defaultMapZoom = 13.0;
 
   // ========================================
-  // 🌍 DISASTER APIS (FREE - No key needed!)
+  // 🌍 DISASTER APIS
   // ========================================
 
   /// USGS Earthquake API (All earthquakes in last 24h)
