@@ -157,19 +157,10 @@ class BLEService {
   /// Number of successful handshakes (packet relays)
   int get handshakeCount => _handshakeCount;
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
   // Track retry attempts for event channel subscription
   int _eventChannelRetryCount = 0;
   static const int _maxEventChannelRetries = 5;
 
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
   /// Whether Bluetooth is currently on
   bool get isBluetoothOn => _isBluetoothOn;
 
@@ -257,9 +248,6 @@ class BLEService {
       debugPrint('Battery optimization request failed: ${e.message}');
       return false;
     }
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
   }
 
   /// Subscribe to native BLE event channel with retry logic
@@ -305,12 +293,6 @@ class BLEService {
         );
       }
     }
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
   }
 
   /// Reinitialize event channel after app resume (handles stale channel)
@@ -322,72 +304,6 @@ class BLEService {
 
     // Use the same subscription logic with retry
     _subscribeToEventChannel();
-  }
-
-  /// Notify service of app lifecycle changes (for advertising mode switching)
-  void setForegroundState(bool isInForeground) {
-    _isInForeground = isInForeground;
-    debugPrint('App foreground state: $_isInForeground');
-
-    // If actively broadcasting, update advertising mode
-    if (_currentBroadcast != null) {
-      _updateAdvertisingMode();
-    }
-  }
-
-  /// Update advertising mode based on foreground state
-  Future<void> _updateAdvertisingMode() async {
-    try {
-      await _channel.invokeMethod<void>('setAdvertisingMode', {
-        'mode': _isInForeground ? 'lowLatency' : 'balanced',
-      });
-    } catch (e) {
-      debugPrint('Failed to update advertising mode: $e');
-    }
-  }
-
-  /// Notify service of app lifecycle changes (for advertising mode switching)
-  void setForegroundState(bool isInForeground) {
-    _isInForeground = isInForeground;
-    debugPrint('App foreground state: $_isInForeground');
-
-    // If actively broadcasting, update advertising mode
-    if (_currentBroadcast != null) {
-      _updateAdvertisingMode();
-    }
-  }
-
-  /// Update advertising mode based on foreground state
-  Future<void> _updateAdvertisingMode() async {
-    try {
-      await _channel.invokeMethod<void>('setAdvertisingMode', {
-        'mode': _isInForeground ? 'lowLatency' : 'balanced',
-      });
-    } catch (e) {
-      debugPrint('Failed to update advertising mode: $e');
-    }
-  }
-
-  /// Notify service of app lifecycle changes (for advertising mode switching)
-  void setForegroundState(bool isInForeground) {
-    _isInForeground = isInForeground;
-    debugPrint('App foreground state: $_isInForeground');
-
-    // If actively broadcasting, update advertising mode
-    if (_currentBroadcast != null) {
-      _updateAdvertisingMode();
-    }
-  }
-
-  /// Update advertising mode based on foreground state
-  Future<void> _updateAdvertisingMode() async {
-    try {
-      await _channel.invokeMethod<void>('setAdvertisingMode', {
-        'mode': _isInForeground ? 'lowLatency' : 'balanced',
-      });
-    } catch (e) {
-      debugPrint('Failed to update advertising mode: $e');
-    }
   }
 
   /// Notify service of app lifecycle changes (for advertising mode switching)
@@ -751,16 +667,7 @@ class BLEService {
   // ==========================================================================
 
   /// Start broadcasting own SOS
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
   /// Start broadcasting own SOS
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
   ///
   /// FIX #2: Uses proper advertising modes based on foreground state
   /// - Foreground: LOW_LATENCY for fast discovery
@@ -891,6 +798,39 @@ class BLEService {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Update active broadcast location data (without stopping)
+  Future<void> updateBroadcastLocation({
+    required double latitude,
+    required double longitude,
+  }) async {
+    if (_currentBroadcast == null || _userId == null) return;
+
+    // Increment sequence to ensure propagation (deduplication relies on seq)
+    _sequence = await _packetStore.incrementSequence();
+
+    final packet = SOSPacket.create(
+      userId: _userId!,
+      sequence: _sequence,
+      latitude: latitude,
+      longitude: longitude,
+      status: _currentBroadcast!.status,
+      targetId: _currentBroadcast!.targetId,
+    );
+
+    _currentBroadcast = packet;
+    _addToQueue(packet);
+
+    // Trigger immediate update
+    try {
+      await _channel.invokeMethod<bool>('startBroadcasting', {
+        'packet': packet.toBytes(),
+        'advertisingMode': _isInForeground ? 'lowLatency' : 'balanced',
+        'txPower': 'high',
+        'serviceUuid': kServiceUUID,
+      });
+    } catch (_) {}
   }
 
   /// Start round-robin broadcast loop with smart prioritization

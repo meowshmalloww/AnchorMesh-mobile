@@ -48,7 +48,6 @@ class BLEManager: NSObject {
     private var isSetup = false
     private var lifecycleObserversSetup = false
     
-<<<<<<< Updated upstream
     // Track last packet reception time per device to avoid duplicates
     private var lastPacketTimestamps: [UUID: Date] = [:]
     private let packetDedupeInterval: TimeInterval = 2.0 // 2 seconds - allows for reliable mesh relay
@@ -58,19 +57,11 @@ class BLEManager: NSObject {
     private var packetHashTimestamps: [Int: Date] = [:]
 
     // Native-level deduplication to prevent looping (Packet Content)
-=======
     // Track last connection time for throttling
     private var deviceConnectionTimestamps: [UUID: Date] = [:]
     private let connectionThrottleInterval: TimeInterval = 10.0 // 10 seconds (was 5s - reduced to prevent spam)
     
     // Native-level deduplication to prevent looping
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     // Key: "userId-sequence", Value: timestamp when first seen
     private var seenPackets: [String: Date] = [:]
     private let packetSeenExpiry: TimeInterval = 30.0 // 30 seconds
