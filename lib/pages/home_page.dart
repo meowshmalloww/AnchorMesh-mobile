@@ -7,6 +7,8 @@ import '../services/disaster_service.dart';
 import '../theme/resq_theme.dart';
 import '../painters/custom_borders.dart';
 import 'disaster_map_page.dart';
+import '../services/platform_service.dart';
+import 'settings_page.dart';
 
 /// ResQ Home Page - Premium Redesign
 ///
@@ -35,6 +37,8 @@ class _HomePageState extends State<HomePage>
   StreamSubscription? _alertSub;
   StreamSubscription? _bleSub;
   StreamSubscription? _connectSub;
+  StreamSubscription? _powerModeSub;
+  bool _isLowPowerMode = false;
 
   @override
   void initState() {
@@ -55,6 +59,32 @@ class _HomePageState extends State<HomePage>
     _connectSub = _connectivityChecker.statusStream.listen((online) {
       if (mounted) setState(() => _isOnline = online);
     });
+    _connectSub = _connectivityChecker.statusStream.listen((online) {
+      if (mounted) setState(() => _isOnline = online);
+    });
+
+    // Listen for Battery Saver Mode
+    _powerModeSub = PlatformService.instance.lowPowerModeStream.listen((
+      enabled,
+    ) {
+      if (mounted) setState(() => _isLowPowerMode = enabled);
+      if (enabled) _showBatteryWarning();
+    });
+
+    // Initial check
+    PlatformService.instance.checkLowPowerMode().then((enabled) {
+      if (mounted && enabled) {
+        setState(() => _isLowPowerMode = true);
+        _showBatteryWarning();
+      }
+    });
+  }
+
+  void _showBatteryWarning() {
+    // Check if banner already visible? Logic handled by build or simple banner
+    // Banners are persistent until dismissed.
+    // Using a persistent container in the build method is better than showMaterialBanner
+    // because it handles state changes correctly.
   }
 
   Future<void> _loadData() async {
@@ -69,6 +99,7 @@ class _HomePageState extends State<HomePage>
     _alertSub?.cancel();
     _bleSub?.cancel();
     _connectSub?.cancel();
+    _powerModeSub?.cancel();
     super.dispose();
   }
 
@@ -86,7 +117,10 @@ class _HomePageState extends State<HomePage>
           // Scrollable content
           SingleChildScrollView(
             padding: EdgeInsets.only(
-              top: topPadding + topBarHeight,
+              top:
+                  topPadding +
+                  topBarHeight +
+                  30, // Added extra padding per user request
               bottom: 120,
             ),
             child: Column(
@@ -96,6 +130,13 @@ class _HomePageState extends State<HomePage>
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
                     child: _buildAlertBanner(colors),
+                  ),
+
+                // Battery Saver Warning
+                if (_isLowPowerMode)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: _buildBatteryWarning(colors),
                   ),
 
                 // Status pills
@@ -222,18 +263,14 @@ class _HomePageState extends State<HomePage>
                 height: 8,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _isOnline
-                      ? colors.statusOnline
-                      : colors.statusOffline,
+                  color: _isOnline ? colors.statusOnline : colors.statusOffline,
                 ),
               ),
               const SizedBox(width: 6),
               Text(
                 _isOnline ? 'ONLINE' : 'OFFLINE',
                 style: TextStyle(
-                  color: _isOnline
-                      ? colors.statusOnline
-                      : colors.statusOffline,
+                  color: _isOnline ? colors.statusOnline : colors.statusOffline,
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1,
@@ -479,5 +516,68 @@ class _HomePageState extends State<HomePage>
       case BLEConnectionState.idle:
         return colors.textSecondary;
     }
+  }
+
+  Widget _buildBatteryWarning(ResQColors colors) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: ShapeDecoration(
+        color: Colors.orange.withAlpha(40),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Colors.orange, width: 1.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.battery_alert, color: Colors.orange, size: 24),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'SYSTEM BATTERY SAVER ON',
+                  style: TextStyle(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'System battery saver kills mesh capability. Please disable it.',
+            style: TextStyle(color: colors.textPrimary, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: () {
+              // Navigate to Settings Page to enable OUR battery saver
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsPage()),
+              );
+            },
+            child: Row(
+              children: [
+                Text(
+                  'Enable ResQ Battery Mode instead',
+                  style: TextStyle(
+                    color: colors.accent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+                const Icon(Icons.arrow_forward, size: 14, color: Colors.orange),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

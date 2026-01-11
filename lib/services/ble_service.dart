@@ -538,6 +538,10 @@ class BLEService {
       status: status,
     );
 
+    debugPrint(
+      'Starting Broadcast: Lat: $latitude, Lon: $longitude, Status: ${status.name}',
+    );
+
     // Add self to front of queue
     _broadcastQueue.insert(0, _currentBroadcast!);
 

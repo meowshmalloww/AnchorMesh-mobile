@@ -128,14 +128,16 @@ class _CompassPointerPageState extends State<CompassPointerPage> {
     return Scaffold(
       body: Stack(
         children: [
-          CompassPointer(
-            heading: _heading,
-            bearing: _targetBearing,
-            distance: _targetDistance,
-            targetName: _targetPacket?.status.label ?? "Unknown",
-            isAccuracyLow:
-                _currentPosition?.accuracy != null &&
-                _currentPosition!.accuracy > 20,
+          Center(
+            child: CompassPointer(
+              heading: _heading,
+              bearing: _targetBearing,
+              distance: _targetDistance,
+              targetName: _targetPacket?.status.label ?? "Unknown",
+              isAccuracyLow:
+                  _currentPosition?.accuracy != null &&
+                  _currentPosition!.accuracy > 20,
+            ),
           ),
 
           Positioned(

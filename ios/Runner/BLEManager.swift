@@ -48,6 +48,10 @@ class BLEManager: NSObject {
     private var isSetup = false
     private var lifecycleObserversSetup = false
     
+    // Track last connection time for throttling
+    private var deviceConnectionTimestamps: [UUID: Date] = [:]
+    private let connectionThrottleInterval: TimeInterval = 5.0 // 5 seconds
+    
     // MARK: - Singleton
     
     static let shared = BLEManager()
@@ -519,6 +523,10 @@ extension BLEManager: CBCentralManagerDelegate {
         }
     }
     
+// MARK: - CBCentralManagerDelegate
+
+extension BLEManager: CBCentralManagerDelegate {
+    
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         
@@ -527,15 +535,26 @@ extension BLEManager: CBCentralManagerDelegate {
             serviceUUIDs.forEach { scannedUUIDs.insert($0) }
         }
         
-        // Connect to read SOS data
-        if !discoveredPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
-            discoveredPeripherals.append(peripheral)
-            central.connect(peripheral, options: nil)
+        let now = Date()
+        let lastTime = deviceConnectionTimestamps[peripheral.identifier] ?? Date.distantPast
+        
+        // Connect if never connected OR if throttle time passed
+        // AND not currently connected
+        if now.timeIntervalSince(lastTime) > connectionThrottleInterval {
+            if !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
+                deviceConnectionTimestamps[peripheral.identifier] = now
+                
+                // Add to connected list prevents double-triggering before callback
+                // But we use connectedPeripherals for actual connections
+                central.connect(peripheral, options: nil)
+            }
         }
     }
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        connectedPeripherals.append(peripheral)
+        if !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
+            connectedPeripherals.append(peripheral)
+        }
         peripheral.delegate = self
         peripheral.discoverServices([BLEManager.serviceUUID])
         

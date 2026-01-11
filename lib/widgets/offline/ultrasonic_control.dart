@@ -243,8 +243,13 @@ class _UltrasonicControlState extends State<UltrasonicControl> {
 
     // 18000 Hz / 21.5 = ~837
     // 20000 Hz / 21.5 = ~930
-    final startBin = (18000 / (sampleRate / samples.length)).round();
-    final endBin = (20000 / (sampleRate / samples.length)).round();
+    // Dynamic range based on baseFrequency
+    // Scan from base - 500 to base + 1500 to cover freq0 and freq1
+    final startFreq = _baseFrequency - 500;
+    final endFreq = _baseFrequency + 1500;
+
+    final startBin = (startFreq / (sampleRate / samples.length)).round();
+    final endBin = (endFreq / (sampleRate / samples.length)).round();
 
     for (int i = startBin; i <= endBin && i < freqData.length; i++) {
       // fftea returns Float64x2 list for complex numbers (real, imaginary)
@@ -381,8 +386,12 @@ class _UltrasonicControlState extends State<UltrasonicControl> {
   }
 
   String _getFreqLabel(double freq) {
-    if ((freq - freq0).abs() < 200) return "BIT 0 (18.5 kHz)";
-    if ((freq - freq1).abs() < 200) return "BIT 1 (19.5 kHz)";
+    if ((freq - freq0).abs() < 200) {
+      return "BIT 0 (${(freq0 / 1000).toStringAsFixed(1)} kHz)";
+    }
+    if ((freq - freq1).abs() < 200) {
+      return "BIT 1 (${(freq1 / 1000).toStringAsFixed(1)} kHz)";
+    }
     return "NOISE";
   }
 

@@ -303,6 +303,17 @@ class _SOSPageState extends State<SOSPage>
         return;
       }
 
+      // Block Null Island (0,0) which usually means GPS not ready
+      if (_latitude == 0.0 && _longitude == 0.0) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid GPS (0,0). Waiting for fix...'),
+          ),
+        );
+        return;
+      }
+
       final success = await _bleService.startMeshMode(
         latitude: _latitude!,
         longitude: _longitude!,
@@ -374,7 +385,36 @@ class _SOSPageState extends State<SOSPage>
                 // Giant SOS Button
                 _buildMainSOSButton(colors),
 
-                const SizedBox(height: 40),
+                const SizedBox(height: 20),
+
+                // Location Debug Info
+                if (_latitude != null && _longitude != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colors.surfaceElevated,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: colors.meshLine.withAlpha(50)),
+                    ),
+                    child: Text(
+                      'GPS: ${_latitude!.toStringAsFixed(6)}, ${_longitude!.toStringAsFixed(6)}',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    'Acquiring Location...',
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                  ),
+
+                const SizedBox(height: 20),
 
                 // Stats / Feedback
                 if (_isBroadcasting)

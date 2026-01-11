@@ -652,13 +652,23 @@ class BLEManager(private val context: Context) {
     }
 
 
+    // Map to track last connection time for throttling (Address -> Timestamp)
+    private val deviceConnectionTimestamps = mutableMapOf<String, Long>()
+    private val CONNECTION_THROTTLE_MS = 5000L // Read every 5 seconds
+
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             result?.device?.let { device ->
                 val address = device.address
-                if (!discoveredDevices.contains(address)) {
-                    discoveredDevices.add(address)
-                    connectToDevice(device)
+                val currentTime = System.currentTimeMillis()
+                val lastTime = deviceConnectionTimestamps[address] ?: 0L
+
+                // Connect if never connected OR if throttle time passed
+                if (currentTime - lastTime > CONNECTION_THROTTLE_MS) {
+                    if (!connectedDevices.contains(device)) {
+                        deviceConnectionTimestamps[address] = currentTime
+                        connectToDevice(device)
+                    }
                 }
             }
         }

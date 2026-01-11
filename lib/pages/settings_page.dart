@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart'; // Added for LatLng
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart'; // Added for location
 import '../services/packet_store.dart';
@@ -35,6 +36,12 @@ class _SettingsPageState extends State<SettingsPage> {
   int _customScanSeconds = 30;
   int _customSleepSeconds = 30;
 
+  bool _isDownloadingMap = false;
+  double _downloadProgress = 0.0;
+  String _downloadStatus = '';
+  bool _autoDownloadMaps = true;
+  String _mapStorageSize = 'Calculating...';
+
   @override
   void initState() {
     super.initState();
@@ -69,7 +76,9 @@ class _SettingsPageState extends State<SettingsPage> {
       _customScanSeconds = prefs.getInt('customScan') ?? 30;
       _customSleepSeconds = prefs.getInt('customSleep') ?? 30;
       _supportsBle5 = supportsBle5;
+      _autoDownloadMaps = prefs.getBool('autoDownloadMaps') ?? true;
     });
+    _updateStorageStats();
   }
 
   Future<void> _saveSetting(String key, dynamic value) async {
@@ -87,10 +96,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     return Scaffold(
       body: ListView(
-        padding: EdgeInsets.only(
-          top: topPadding + 12,
-          bottom: 120,
-        ),
+        padding: EdgeInsets.only(top: topPadding + 12, bottom: 120),
         children: [
           // Display Section
           _buildSectionCard(
@@ -159,17 +165,101 @@ class _SettingsPageState extends State<SettingsPage> {
 
           const SizedBox(height: 12),
 
-          // Offline Resources Section
+          // Data & Storage Section (New)
           _buildSectionCard(
-            title: 'Offline Resources',
-            icon: Icons.offline_pin,
-            iconColor: Colors.blue,
+            title: 'Data & Storage',
+            icon: Icons.storage,
+            iconColor: Colors.teal,
             children: [
+              // Storage Stats
+              // Storage Stats (Custom Row for alignment)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Icon(Icons.sd_storage, color: Colors.blue),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Map Storage',
+                            style: TextStyle(fontSize: 16),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _mapStorageSize,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.blueGrey,
+                      ),
+                      onPressed: _clearMapCache,
+                      tooltip: 'Clear Map Cache',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+
+              if (_isDownloadingMap)
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _downloadStatus,
+                        style: TextStyle(fontSize: 12, color: Colors.blue),
+                      ),
+                      const SizedBox(height: 4),
+                      LinearProgressIndicator(value: _downloadProgress),
+                    ],
+                  ),
+                ),
+
+              // Download Actions
               ListTile(
-                title: const Text('Download Maps'),
-                subtitle: const Text('Save map regions for offline use'),
-                leading: const Icon(Icons.download),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                leading: const Icon(Icons.public, color: Colors.indigo),
+                title: const Text('Global Disaster Map'),
+                subtitle: const Text(
+                  'Whole World (Zoom 0-5)\nNot downloadable by area',
+                ),
+                isThreeLine: true,
+                trailing: const Icon(Icons.download),
+                enabled: !_isDownloadingMap,
+                onTap: _downloadGlobalMap,
+              ),
+              ListTile(
+                leading: const Icon(Icons.place, color: Colors.red),
+                title: const Text('Local SOS Map'),
+                subtitle: const Text('Download specific area'),
+                trailing: const Icon(Icons.download),
+                enabled: !_isDownloadingMap,
+                onTap: _downloadLocalMap,
+              ),
+
+              const Divider(),
+
+              // Legacy Region Selection
+              ListTile(
+                title: const Text('Custom Region'),
+                leading: const Icon(Icons.map),
+                trailing: const Icon(Icons.chevron_right),
                 onTap: () {
                   Navigator.push(
                     context,
@@ -179,12 +269,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   );
                 },
               ),
-              const Divider(height: 1),
+
               ListTile(
-                title: const Text('Packet History'),
-                subtitle: const Text('View alert message logs'),
+                title: const Text('Alert History'),
                 leading: const Icon(Icons.history),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                trailing: const Icon(Icons.chevron_right),
                 onTap: () {
                   Navigator.push(
                     context,
@@ -192,6 +281,26 @@ class _SettingsPageState extends State<SettingsPage> {
                       builder: (context) => const AlertsHistoryPage(),
                     ),
                   );
+                },
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          _buildSectionCard(
+            title: 'Offline Settings',
+            icon: Icons.settings_system_daydream,
+            iconColor: Colors.teal,
+            children: [
+              _buildSwitchTile(
+                icon: Icons.download_rounded,
+                title: 'Auto-download Maps',
+                subtitle: 'Update maps on launch',
+                value: _autoDownloadMaps,
+                onChanged: (val) {
+                  setState(() => _autoDownloadMaps = val);
+                  _saveSetting('autoDownloadMaps', val);
                 },
               ),
             ],
@@ -344,7 +453,7 @@ class _SettingsPageState extends State<SettingsPage> {
               const ListTile(
                 leading: Icon(Icons.verified, color: Colors.green),
                 title: Text('Version'),
-                subtitle: Text('1.0.0'),
+                subtitle: Text('v2.6.0'),
               ),
               ListTile(
                 leading: const Icon(Icons.help_outline, color: Colors.blue),
@@ -761,28 +870,36 @@ class _SettingsPageState extends State<SettingsPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '1. You send an SOS',
+                '1. Activate SOS',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
-              Text('Your phone broadcasts via Bluetooth'),
+              Text(
+                'Your phone broadcasts a secure signal via Bluetooth (BLE). No internet required.',
+              ),
               SizedBox(height: 12),
               Text(
-                '2. Phones relay your message',
+                '2. Mesh Relay',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
-              Text('Nearby phones pick up and rebroadcast'),
+              Text(
+                'Nearby devices act as anchors, picking up and relaying your signal to extend range.',
+              ),
               SizedBox(height: 12),
               Text(
-                '3. Message reaches rescuers',
+                '3. Global Delivery',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
-              Text('When any phone gets internet, your SOS uploads'),
+              Text(
+                'If ANY phone in the mesh has internet, your SOS is uploaded to our servers immediately.',
+              ),
               SizedBox(height: 12),
               Text(
-                '4. Even without internet',
+                '4. Local Rescue',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
-              Text('Rescuers with the app can see your location directly'),
+              Text(
+                'Rescuers can track your exact direction and distance without internet using the signal locator.',
+              ),
             ],
           ),
         ),
@@ -833,13 +950,145 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!serviceEnabled) return null;
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) return null;
+        return null;
       }
-      if (permission == LocationPermission.deniedForever) return null;
       return await Geolocator.getCurrentPosition();
-    } catch (_) {
+    } catch (e) {
       return null;
+    }
+  }
+
+  // Offline Map Helpers
+  Future<void> _updateStorageStats() async {
+    final stats = await OfflineMapService.instance.getStorageStats();
+    final bytes = stats['sizeBytes'] as int;
+    final mb = (bytes / (1024 * 1024)).toStringAsFixed(1);
+    final count = stats['tiles'] as int;
+    if (mounted) {
+      setState(() {
+        _mapStorageSize = '$mb MB ($count tiles)';
+      });
+    }
+  }
+
+  Future<void> _clearMapCache() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear Map Cache?'),
+        content: const Text('This will delete all offline map tiles.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await OfflineMapService.instance.clearCache();
+      _updateStorageStats();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Map cache cleared')));
+      }
+    }
+  }
+
+  Future<void> _downloadGlobalMap() async {
+    setState(() {
+      _isDownloadingMap = true;
+      _downloadStatus = 'Starting global download...';
+      _downloadProgress = 0.0;
+    });
+
+    try {
+      await OfflineMapService.instance.downloadGlobalMap(
+        onProgress: (done, total) {
+          if (mounted) {
+            setState(() {
+              _downloadProgress = done / total;
+              _downloadStatus =
+                  'Downloading Global Map: ${(done / total * 100).toInt()}% ($done/$total)';
+            });
+          }
+        },
+        onComplete: () {
+          if (mounted) {
+            setState(() {
+              _isDownloadingMap = false;
+              _downloadStatus = 'Download Complete';
+            });
+            _updateStorageStats();
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Global Map Downloaded!')),
+            );
+          }
+        },
+        onError: (err) {
+          if (mounted) {
+            setState(() {
+              _isDownloadingMap = false;
+              _downloadStatus = 'Error: $err';
+            });
+          }
+        },
+      );
+    } catch (e) {
+      setState(() => _isDownloadingMap = false);
+    }
+  }
+
+  Future<void> _downloadLocalMap() async {
+    setState(() {
+      _isDownloadingMap = true;
+      _downloadStatus = 'Getting location...';
+      _downloadProgress = 0.0;
+    });
+
+    try {
+      final pos = await _getCurrentPosition();
+      if (pos == null) {
+        setState(() {
+          _isDownloadingMap = false;
+          _downloadStatus = 'Location unavailable';
+        });
+        return;
+      }
+
+      await OfflineMapService.instance.downloadLocalMap(
+        center: LatLng(pos.latitude, pos.longitude), // Requires latlong2 import
+        onProgress: (done, total) {
+          if (mounted) {
+            setState(() {
+              _downloadProgress = done / total;
+              _downloadStatus =
+                  'Downloading Local Map: ${(done / total * 100).toInt()}% ($done/$total)';
+            });
+          }
+        },
+        onComplete: () {
+          if (mounted) {
+            setState(() {
+              _isDownloadingMap = false;
+              _downloadStatus = 'Download Complete';
+            });
+            _updateStorageStats();
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Local Map Downloaded!')),
+            );
+          }
+        },
+        onError: (err) {},
+      );
+    } catch (e) {
+      setState(() => _isDownloadingMap = false);
     }
   }
 }

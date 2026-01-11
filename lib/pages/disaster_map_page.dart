@@ -4,6 +4,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/disaster_event.dart';
 import '../services/disaster_service.dart';
+import '../services/offline_tile_provider.dart';
+import '../services/offline_map_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DisasterMapPage extends StatefulWidget {
   const DisasterMapPage({super.key});
@@ -53,8 +56,23 @@ class _DisasterMapPageState extends State<DisasterMapPage>
     super.initState();
     _events = _disasterService.activeEvents;
     _setupListener();
-    if (_events.isEmpty) {
-      _fetchData();
+    _fetchData();
+
+    _checkOfflineMaps();
+  }
+
+  Future<void> _checkOfflineMaps() async {
+    final prefs = await SharedPreferences.getInstance();
+    final autoDownload = prefs.getBool('autoDownloadMaps') ?? true;
+    final hasGlobal = await OfflineMapService.instance.hasGlobalMap();
+
+    if (autoDownload && !hasGlobal) {
+      // Trigger background download of global map
+      OfflineMapService.instance.downloadGlobalMap(
+        onProgress: (done, total) {}, // Silent background
+        onComplete: () {},
+        onError: (e) {},
+      );
     }
   }
 
@@ -144,6 +162,7 @@ class _DisasterMapPageState extends State<DisasterMapPage>
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.development.heyblue',
                 maxZoom: 18,
+                tileProvider: LocalFallbackTileProvider(),
               ),
               ValueListenableBuilder<double>(
                 valueListenable: _zoomNotifier,

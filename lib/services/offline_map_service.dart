@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Offline Map Service
 /// customized tile downloader for region-based caching
@@ -108,22 +109,100 @@ class OfflineMapService {
     return count;
   }
 
-  /// Download region
+  // ==================
+  // Public Accessors
+  // ==================
+
+  /// Get absolute path for a tile coordinates
+  String getTilePath(int z, int x, int y) {
+    if (_tilesDir == null) return '';
+    return path.join(_tilesDir!, '$z', '$x', '$y.png');
+  }
+
+  // ==================
+  // Pre-defined Downloads
+  // ==================
+
+  /// Download global world map (Zoom 0-5)
+  Future<void> downloadGlobalMap({
+    required Function(int downloaded, int total) onProgress,
+    required Function() onComplete,
+    required Function(String error) onError,
+  }) async {
+    // World bounds
+    final bounds = LatLngBounds(const LatLng(85, -180), const LatLng(-85, 180));
+
+    await downloadRegion(
+      bounds: bounds,
+      minZoom: 0,
+      maxZoom: 5,
+      tileUrlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      onProgress: onProgress,
+      onComplete: () async {
+        // Mark as downloaded
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('has_global_map', true);
+        onComplete();
+      },
+      onError: onError,
+    );
+  }
+
+  /// Download local map around a center point (Zoom 12-14, ~20km radius)
+  Future<void> downloadLocalMap({
+    required LatLng center,
+    required Function(int downloaded, int total) onProgress,
+    required Function() onComplete,
+    required Function(String error) onError,
+  }) async {
+    // ~20km box around center. 1 deg lat = 111km. 0.2 deg ~ 20km.
+    final bounds = LatLngBounds(
+      LatLng(center.latitude - 0.2, center.longitude - 0.2),
+      LatLng(center.latitude + 0.2, center.longitude + 0.2),
+    );
+
+    await downloadRegion(
+      bounds: bounds,
+      minZoom: 12,
+      maxZoom: 14,
+      tileUrlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      onProgress: onProgress,
+      onComplete: () async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('has_local_map', true);
+        onComplete();
+      },
+      onError: onError,
+    );
+  }
+
+  /// Check if global map is already downloaded
+  Future<bool> hasGlobalMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('has_global_map') ?? false;
+  }
+
+  /// Check if local map is already downloaded
+  Future<bool> hasLocalMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('has_local_map') ?? false;
+  }
+
+  /// Clear Global Map specifically? hard since mix of tiles.
+  /// For now just clear all or rely on clearCache.
+
+  /// Download region (Internal + Generic)
   Future<void> downloadRegion({
     required LatLngBounds bounds,
     required int minZoom,
     required int maxZoom,
-    required String
-    tileUrlTemplate, // e.g. https://tile.openstreetmap.org/{z}/{x}/{y}.png
+    required String tileUrlTemplate,
     required Function(int downloaded, int total) onProgress,
     required Function() onComplete,
     required Function(String error) onError,
   }) async {
     if (!_isInitialized) await initialize();
 
-    // Calculate list of tiles
-    []; // Point(x, y, z) - storing z in "mag" or separate struct
-    // Actually simpler to store a struct
     List<_TileId> tileIds = [];
 
     for (var z = minZoom; z <= maxZoom; z++) {
@@ -148,22 +227,17 @@ class OfflineMapService {
     int downloaded = 0;
     final client = HttpClient();
 
-    // 2. Download loop (throttled/parallel)
-    // Simple serial for robustness first, or small batches
+    // Batch processing to improve speed but respect limits
+    // Since UI shouldn't freeze, we use awaits.
     for (final tile in tileIds) {
       try {
-        final savePath = path.join(
-          _tilesDir!,
-          '${tile.z}',
-          '${tile.x}',
-          '${tile.y}.png',
-        );
+        final savePath = getTilePath(tile.z, tile.x, tile.y);
         final file = File(savePath);
 
         if (await file.exists()) {
           downloaded++;
           onProgress(downloaded, total);
-          continue; // Skip existing
+          continue;
         }
 
         await file.create(recursive: true);
@@ -174,7 +248,6 @@ class OfflineMapService {
             .replaceAll('{y}', '${tile.y}');
 
         final request = await client.getUrl(Uri.parse(url));
-        // Add User Agent as required by OSM
         request.headers.add(
           'User-Agent',
           'MeshSOS_App/1.0 (flutter_project_hackathone)',
@@ -186,15 +259,13 @@ class OfflineMapService {
           downloaded++;
           onProgress(downloaded, total);
         } else {
-          // Delete empty file if created
           await file.delete();
         }
       } catch (e) {
         debugPrint('Error downloading tile $tile: $e');
-        // Continues
       }
-      // Small delay to be nice to OSM
-      await Future.delayed(const Duration(milliseconds: 50));
+      // Minimal delay
+      await Future.delayed(const Duration(milliseconds: 10));
     }
 
     client.close();

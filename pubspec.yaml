@@ -55,6 +55,7 @@ dependencies:
 
   # Cloud sync
   supabase_flutter: ^2.8.0
+  battery_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:
