@@ -279,6 +279,16 @@ import UserNotifications
             BLEManager.shared.setCurrentUserId(UInt32(userId))
             result(true)
 
+        case "getBluetoothState":
+            // Get current Bluetooth state
+            result(BLEManager.shared.getBluetoothState())
+
+        case "requestBluetoothEnable":
+            // iOS doesn't allow programmatic Bluetooth enable
+            // Return current state and let user know via UI if needed
+            let state = BLEManager.shared.getBluetoothState()
+            result(state == "poweredOn")
+
         default:
             result(FlutterMethodNotImplemented)
         }

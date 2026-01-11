@@ -7,7 +7,7 @@ import AudioToolbox
 /// BLE Manager for iOS - Handles CoreBluetooth operations
 /// Supports both Peripheral (advertising) and Central (scanning) modes
 class BLEManager: NSObject {
-    
+
     // MARK: - Constants
 
     /// Custom service UUID for SOS mesh
@@ -26,29 +26,28 @@ class BLEManager: NSObject {
     static let STATUS_MEDICAL: UInt8 = 0x02
     static let STATUS_TRAPPED: UInt8 = 0x03
     static let STATUS_SUPPLIES: UInt8 = 0x04
-    
+
     // MARK: - Properties
-    
+
     private var centralManager: CBCentralManager?
     private var peripheralManager: CBPeripheralManager?
-    
+
     private var sosCharacteristic: CBMutableCharacteristic?
     private var currentPacketData: Data?
-    
+
     private var discoveredPeripherals: [CBPeripheral] = []
     private var connectedPeripherals: [CBPeripheral] = []
     private var scannedUUIDs: Set<CBUUID> = []
-    
+
     private var eventSink: FlutterEventSink?
-    
+
     private var isScanning = false
     private var isBroadcasting = false
 
     private var lowPowerModeObserver: NSObjectProtocol?
     private var isSetup = false
     private var lifecycleObserversSetup = false
-    
-<<<<<<< Updated upstream
+
     // Track last packet reception time per device to avoid duplicates
     private var lastPacketTimestamps: [UUID: Date] = [:]
     private let packetDedupeInterval: TimeInterval = 2.0 // 2 seconds - allows for reliable mesh relay
@@ -57,28 +56,34 @@ class BLEManager: NSObject {
     private var recentPacketHashes: Set<Int> = []
     private var packetHashTimestamps: [Int: Date] = [:]
 
-    // Native-level deduplication to prevent looping (Packet Content)
-=======
     // Track last connection time for throttling
     private var deviceConnectionTimestamps: [UUID: Date] = [:]
-    private let connectionThrottleInterval: TimeInterval = 10.0 // 10 seconds (was 5s - reduced to prevent spam)
-    
-    // Native-level deduplication to prevent looping
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
+    private let connectionThrottleInterval: TimeInterval = 10.0 // 10 seconds
+
+    // Native-level deduplication to prevent looping (Packet Content)
     // Key: "userId-sequence", Value: timestamp when first seen
     private var seenPackets: [String: Date] = [:]
     private let packetSeenExpiry: TimeInterval = 30.0 // 30 seconds
-    
+
+    // Current user ID for filtering own packets from notifications
+    private var currentUserId: UInt32? = nil
+
+    // Track notification timestamps per user to prevent spam
+    // Only show one notification per user per 30 seconds
+    private var notificationTimestamps: [UInt32: Date] = [:]
+    private let notificationCooldown: TimeInterval = 30.0
+
+    // Connection pool for parallel connections
+    private var pendingConnections: [CBPeripheral] = []
+    private let maxConcurrentConnections = 3
+
+    // Scheduled disconnect timers for connection caching
+    private var disconnectTimers: [UUID: DispatchWorkItem] = [:]
+
     // MARK: - Singleton
-    
+
     static let shared = BLEManager()
-    
+
     private override init() {
         super.init()
         setupLowPowerModeObserver()
@@ -121,7 +126,7 @@ class BLEManager: NSObject {
             _ = startScanning()
         }
     }
-    
+
     // MARK: - Setup
 
     func setup() {
@@ -152,6 +157,24 @@ class BLEManager: NSObject {
 
         // Request notification permission for SOS alerts
         requestNotificationPermission()
+
+        // Start periodic cleanup timer for memory management
+        startCleanupTimer()
+
+        // Check if Bluetooth is already powered on (e.g., app restart scenario)
+        // This handles the case where centralManagerDidUpdateState was already called
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            if self?.centralManager?.state == .poweredOn {
+                self?.sendEvent(type: "bluetoothReady", data: true)
+                print("Bluetooth already powered on at setup - sending bluetoothReady event")
+            }
+        }
+    }
+
+    /// Set current user ID for filtering own packets
+    func setCurrentUserId(_ userId: UInt32) {
+        self.currentUserId = userId
+        print("BLEManager: Set current user ID to \(String(format: "%08X", userId))")
     }
 
     /// Reset manager state for new Flutter engine connection (app relaunch)
@@ -173,12 +196,21 @@ class BLEManager: NSObject {
         lastPacketTimestamps.removeAll()
         recentPacketHashes.removeAll()
         packetHashTimestamps.removeAll()
+        seenPackets.removeAll()
+
+        // Clear notification timestamps
+        notificationTimestamps.removeAll()
+
+        // Clear connection pool
+        pendingConnections.removeAll()
+        disconnectTimers.values.forEach { $0.cancel() }
+        disconnectTimers.removeAll()
 
         // Reset BLE operation flags
         isScanning = false
         isBroadcasting = false
     }
-    
+
     private func setupLowPowerModeObserver() {
         // Prevent duplicate observers
         guard lowPowerModeObserver == nil else { return }
@@ -211,13 +243,38 @@ class BLEManager: NSObject {
             return
         }
 
+        // Extract userId from packet (bytes 2-5, little endian)
+        let packetUserId: UInt32 = UInt32(packetData[2]) |
+            (UInt32(packetData[3]) << 8) |
+            (UInt32(packetData[4]) << 16) |
+            (UInt32(packetData[5]) << 24)
+
+        // Don't show notification for our own packets
+        if let myUserId = currentUserId, packetUserId == myUserId {
+            print("Filtering own packet from notification (userId: \(String(format: "%08X", packetUserId)))")
+            return
+        }
+
         let status = packetData[16]
 
         // Don't notify for SAFE status
         if status == BLEManager.STATUS_SAFE {
             print("Received SAFE status, no notification needed")
+            // Clear notification timestamp so next SOS from this user will show
+            notificationTimestamps.removeValue(forKey: packetUserId)
             return
         }
+
+        // Notification cooldown: Only show one notification per user per 30 seconds
+        let now = Date()
+        if let lastNotification = notificationTimestamps[packetUserId],
+           now.timeIntervalSince(lastNotification) < notificationCooldown {
+            print("Notification cooldown active for user \(String(format: "%08X", packetUserId)) - skipping")
+            return
+        }
+
+        // Update notification timestamp
+        notificationTimestamps[packetUserId] = now
 
         // Extract lat/lon (bytes 8-15, stored as int * 10^7, BIG ENDIAN - matches Flutter encoding)
         let latE7 = Int32(bitPattern:
@@ -306,7 +363,7 @@ class BLEManager: NSObject {
             }
         }
     }
-    
+
     // MARK: - Flutter Channel Setup
 
     func setEventSink(_ sink: FlutterEventSink?) {
@@ -332,11 +389,11 @@ class BLEManager: NSObject {
             sink(["type": type, "data": data as Any])
         }
     }
-    
+
     private func updateState(_ state: String) {
         sendEvent(type: "stateChanged", data: state)
     }
-    
+
     // MARK: - Broadcasting (Peripheral Mode)
 
     func startBroadcasting(packetData: Data) -> Bool {
@@ -428,21 +485,21 @@ class BLEManager: NSObject {
         peripheralManager.startAdvertising(advertisingData)
         print("Started advertising SOS service (scanners must connect to read \(packetData.count) byte packet)")
     }
-    
+
     func stopBroadcasting() -> Bool {
         peripheralManager?.stopAdvertising()
         peripheralManager?.removeAllServices()
-        
+
         isBroadcasting = false
         updateCurrentState()
-        
+
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        
+
         return true
     }
-    
+
     // MARK: - Scanning (Central Mode)
 
     func startScanning() -> Bool {
@@ -466,14 +523,14 @@ class BLEManager: NSObject {
         print("BLE scanning started for SOS service (allowDuplicates: true)")
         return true
     }
-    
+
     func stopScanning() -> Bool {
         centralManager?.stopScan()
         isScanning = false
         updateCurrentState()
         return true
     }
-    
+
     private func updateCurrentState() {
         let state: String
         if isBroadcasting && isScanning {
@@ -487,36 +544,60 @@ class BLEManager: NSObject {
         }
         updateState(state)
     }
-    
+
     // MARK: - Utility
-    
+
     func checkInternet() -> Bool {
         // Simple reachability check
         guard let url = URL(string: "https://www.google.com") else { return false }
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
-        
+
         let semaphore = DispatchSemaphore(value: 0)
         var hasInternet = false
-        
+
         URLSession.shared.dataTask(with: request) { _, response, _ in
             if let httpResponse = response as? HTTPURLResponse {
                 hasInternet = httpResponse.statusCode == 200
             }
             semaphore.signal()
         }.resume()
-        
+
         semaphore.wait()
         return hasInternet
     }
-    
+
     func isLowPowerModeEnabled() -> Bool {
         return ProcessInfo.processInfo.isLowPowerModeEnabled
     }
-    
+
     func getDeviceUUID() -> String {
         // Use identifierForVendor as device UUID
         return UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+    }
+
+    /// Get current Bluetooth state as string
+    func getBluetoothState() -> String {
+        guard let centralManager = centralManager else {
+            return "unknown"
+        }
+
+        switch centralManager.state {
+        case .poweredOn:
+            return "poweredOn"
+        case .poweredOff:
+            return "poweredOff"
+        case .unauthorized:
+            return "unauthorized"
+        case .unsupported:
+            return "unsupported"
+        case .resetting:
+            return "resetting"
+        case .unknown:
+            return "unknown"
+        @unknown default:
+            return "unknown"
+        }
     }
 
     // MARK: - Testing
@@ -579,19 +660,150 @@ class BLEManager: NSObject {
         showSOSNotification(packetData: testPacket)
     }
 
+    // MARK: - Connection Pool Management
+
+    /// Process pending connection queue - allows parallel connections up to limit
+    private func processConnectionQueue() {
+        guard let central = centralManager else { return }
+
+        let availableSlots = maxConcurrentConnections - connectedPeripherals.count
+        guard availableSlots > 0 else {
+            print("Connection pool full (\(connectedPeripherals.count)/\(maxConcurrentConnections))")
+            return
+        }
+
+        let connectionsToMake = min(availableSlots, pendingConnections.count)
+        guard connectionsToMake > 0 else { return }
+
+        for _ in 0..<connectionsToMake {
+            guard !pendingConnections.isEmpty else { break }
+            let peripheral = pendingConnections.removeFirst()
+
+            // Skip if already connected or connecting
+            guard !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }),
+                  peripheral.state != .connecting else {
+                continue
+            }
+
+            print("Connecting to peripheral (pool: \(connectedPeripherals.count + 1)/\(maxConcurrentConnections), queued: \(pendingConnections.count))")
+            central.connect(peripheral, options: nil)
+        }
+    }
+
+    /// Schedule a delayed disconnect for connection caching
+    private func scheduleDelayedDisconnect(for peripheral: CBPeripheral, after seconds: TimeInterval = 30) {
+        // Cancel any existing timer for this peripheral
+        disconnectTimers[peripheral.identifier]?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            print("Delayed disconnect for peripheral: \(peripheral.identifier)")
+            self.centralManager?.cancelPeripheralConnection(peripheral)
+            self.disconnectTimers.removeValue(forKey: peripheral.identifier)
+        }
+
+        disconnectTimers[peripheral.identifier] = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: workItem)
+    }
+
+    /// Cancel delayed disconnect (e.g., when new data received)
+    private func cancelDelayedDisconnect(for peripheral: CBPeripheral) {
+        disconnectTimers[peripheral.identifier]?.cancel()
+        disconnectTimers.removeValue(forKey: peripheral.identifier)
+    }
+
+    /// Clean up stale peripherals and packet timestamps (called periodically)
+    private func cleanupStalePeripherals() {
+        let now = Date()
+        let staleThreshold: TimeInterval = 300 // 5 minutes
+
+        // Clean up old packet timestamps
+        let oldTimestampCount = lastPacketTimestamps.count
+        lastPacketTimestamps = lastPacketTimestamps.filter {
+            now.timeIntervalSince($0.value) < staleThreshold
+        }
+
+        // Clean up old packet hashes
+        let oldHashCount = packetHashTimestamps.count
+        packetHashTimestamps = packetHashTimestamps.filter {
+            now.timeIntervalSince($0.value) < 60 // 1 minute for hash cache
+        }
+
+        // Clean up old notification timestamps (keep for 5 minutes)
+        let oldNotificationCount = notificationTimestamps.count
+        notificationTimestamps = notificationTimestamps.filter {
+            now.timeIntervalSince($0.value) < staleThreshold
+        }
+
+        // Clean up old seen packets
+        let oldSeenPacketsCount = seenPackets.count
+        seenPackets = seenPackets.filter {
+            now.timeIntervalSince($0.value) < packetSeenExpiry
+        }
+
+        // Clean up discovered peripherals that are no longer connected and have stale timestamps
+        let oldDiscoveredCount = discoveredPeripherals.count
+        discoveredPeripherals.removeAll { peripheral in
+            let notConnected = !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier })
+            let notPending = !pendingConnections.contains(where: { $0.identifier == peripheral.identifier })
+            let isStale = lastPacketTimestamps[peripheral.identifier] == nil
+            return notConnected && notPending && isStale
+        }
+
+        let cleanedTimestamps = oldTimestampCount - lastPacketTimestamps.count
+        let cleanedHashes = oldHashCount - packetHashTimestamps.count
+        let cleanedNotifications = oldNotificationCount - notificationTimestamps.count
+        let cleanedSeenPackets = oldSeenPacketsCount - seenPackets.count
+        let cleanedPeripherals = oldDiscoveredCount - discoveredPeripherals.count
+
+        if cleanedTimestamps > 0 || cleanedHashes > 0 || cleanedNotifications > 0 || cleanedSeenPackets > 0 || cleanedPeripherals > 0 {
+            print("Cleanup: removed \(cleanedTimestamps) timestamps, \(cleanedHashes) hashes, \(cleanedNotifications) notification records, \(cleanedSeenPackets) seen packets, \(cleanedPeripherals) peripherals")
+        }
+    }
+
+    /// Start periodic cleanup timer (called from setup)
+    private func startCleanupTimer() {
+        // Run cleanup every 5 minutes
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            self?.cleanupStalePeripherals()
+        }
+
+        // Run scan health check every 30 seconds
+        // This ensures scanning stays active even if it stops unexpectedly
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.ensureScanningHealthy()
+        }
+    }
+
+    /// Ensure scanning is healthy - restart if needed
+    private func ensureScanningHealthy() {
+        guard let central = centralManager, central.state == .poweredOn else { return }
+
+        // If we think we're scanning but centralManager isn't, restart
+        if isScanning && !central.isScanning {
+            print("Scan health check: Scanning was stopped unexpectedly, restarting...")
+            _ = startScanning()
+        }
+    }
+
     // MARK: - Cleanup
-    
+
     func stopAll() {
         stopScanning()
         stopBroadcasting()
-        
+
         for peripheral in connectedPeripherals {
             centralManager?.cancelPeripheralConnection(peripheral)
         }
         connectedPeripherals.removeAll()
         discoveredPeripherals.removeAll()
+        pendingConnections.removeAll()
+
+        // Cancel all delayed disconnects
+        disconnectTimers.values.forEach { $0.cancel() }
+        disconnectTimers.removeAll()
     }
-    
+
     deinit {
         if let observer = lowPowerModeObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -603,20 +815,35 @@ class BLEManager: NSObject {
 // MARK: - CBCentralManagerDelegate
 
 extension BLEManager: CBCentralManagerDelegate {
-    
+
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
             updateState("idle")
+            // Send event to trigger passive scanning in Flutter
+            // This ensures scanning only starts when Bluetooth is actually ready
+            sendEvent(type: "bluetoothReady", data: true)
+            print("Bluetooth powered on - sending bluetoothReady event to Flutter")
+
+            // If scanning was active before Bluetooth was toggled, restart it
+            if isScanning {
+                print("Restarting scanning after Bluetooth restored")
+                central.stopScan() // Clean up any stale state
+                _ = startScanning()
+            }
         case .poweredOff:
             updateState("bluetoothOff")
+            isScanning = false // Reset flag
+            sendEvent(type: "bluetoothReady", data: false)
         case .unauthorized, .unsupported:
             updateState("unavailable")
+            isScanning = false // Reset flag
+            sendEvent(type: "bluetoothReady", data: false)
         default:
             break
         }
     }
-    
+
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
 
@@ -670,27 +897,47 @@ extension BLEManager: CBCentralManagerDelegate {
 
                 lastPacketTimestamps[peripheral.identifier] = now
 
-                print("Discovered SOS beacon, connecting to read packet...")
-                central.connect(peripheral, options: nil)
+                // Add to pending queue and process
+                if !pendingConnections.contains(where: { $0.identifier == peripheral.identifier }) {
+                    pendingConnections.append(peripheral)
+                }
+
+                print("Discovered SOS beacon, queuing connection...")
+                processConnectionQueue()
             }
         }
     }
-    
+
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         if !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
             connectedPeripherals.append(peripheral)
         }
         peripheral.delegate = self
         peripheral.discoverServices([BLEManager.serviceUUID])
-        
+
         sendEvent(type: "connectedDevicesChanged", data: connectedPeripherals.count)
+
+        // Process more connections from queue
+        processConnectionQueue()
     }
-    
+
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         connectedPeripherals.removeAll { $0.identifier == peripheral.identifier }
+        disconnectTimers.removeValue(forKey: peripheral.identifier)
         sendEvent(type: "connectedDevicesChanged", data: connectedPeripherals.count)
+
+        // Process more connections from queue
+        processConnectionQueue()
     }
-    
+
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        print("Failed to connect to peripheral: \(peripheral.identifier), error: \(error?.localizedDescription ?? "unknown")")
+        connectedPeripherals.removeAll { $0.identifier == peripheral.identifier }
+
+        // Process more connections from queue
+        processConnectionQueue()
+    }
+
     // State restoration
     func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
         if let peripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] {
@@ -710,41 +957,41 @@ extension BLEManager: CBCentralManagerDelegate {
 // MARK: - CBPeripheralDelegate
 
 extension BLEManager: CBPeripheralDelegate {
-    
+
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
-        
+
         for service in services where service.uuid == BLEManager.serviceUUID {
             peripheral.discoverCharacteristics([BLEManager.characteristicUUID], for: service)
         }
     }
-    
+
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard let characteristics = service.characteristics else { return }
-        
+
         for characteristic in characteristics where characteristic.uuid == BLEManager.characteristicUUID {
             peripheral.readValue(for: characteristic)
         }
     }
-    
+
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic.uuid == BLEManager.characteristicUUID,
               let data = characteristic.value else { return }
-        
+
         // Native-level deduplication to prevent looping
         let packetId = extractPacketId(from: data)
         let now = Date()
         let lastSeen = seenPackets[packetId] ?? Date.distantPast
-        
+
         // Clean up old entries periodically
         if seenPackets.count > 100 {
             seenPackets = seenPackets.filter { now.timeIntervalSince($0.value) < packetSeenExpiry }
         }
-        
+
         if now.timeIntervalSince(lastSeen) > packetSeenExpiry {
             // New packet or expired - process it
             seenPackets[packetId] = now
-            
+
             // Send received packet to Flutter
             sendEvent(type: "packetReceived", data: Array(data))
 
@@ -755,20 +1002,23 @@ extension BLEManager: CBPeripheralDelegate {
             print("Ignoring duplicate packet: \(packetId) (seen \(Int(now.timeIntervalSince(lastSeen)))s ago)")
         }
 
-        // Disconnect after reading
-        centralManager?.cancelPeripheralConnection(peripheral)
+        // Schedule delayed disconnect (connection caching)
+        scheduleDelayedDisconnect(for: peripheral, after: 30)
     }
-    
+
     // Extract packet ID (userId-sequence) for deduplication
     private func extractPacketId(from data: Data) -> String {
         guard data.count >= 8 else { return "unknown" }
-        
-        // Read userId (bytes 2-5, Big Endian)
-        let userId = (Int(data[2]) << 24) | (Int(data[3]) << 16) | (Int(data[4]) << 8) | Int(data[5])
-        
-        // Read sequence (bytes 6-7, Big Endian)
-        let sequence = (Int(data[6]) << 8) | Int(data[7])
-        
+
+        // Read userId (bytes 2-5, Little Endian - as per packet spec)
+        let userId = UInt32(data[2]) |
+            (UInt32(data[3]) << 8) |
+            (UInt32(data[4]) << 16) |
+            (UInt32(data[5]) << 24)
+
+        // Read sequence (bytes 6-7, Little Endian)
+        let sequence = UInt16(data[6]) | (UInt16(data[7]) << 8)
+
         return "\(userId)-\(sequence)"
     }
 }
@@ -781,12 +1031,20 @@ extension BLEManager: CBPeripheralManagerDelegate {
         switch peripheral.state {
         case .poweredOn:
             print("Peripheral manager powered on")
-            // If we were trying to broadcast, retry now
-            if let data = currentPacketData, !isBroadcasting {
+            // If we have packet data, restart broadcasting
+            // This handles the case where Bluetooth was toggled off then on
+            if let data = currentPacketData {
+                // Clean up any stale state first
+                peripheral.removeAllServices()
+                isBroadcasting = false
+
+                // Restart broadcasting with the saved packet
+                print("Restarting broadcast after Bluetooth restored")
                 _ = startBroadcasting(packetData: data)
             }
         case .poweredOff:
             print("Peripheral manager powered off")
+            isBroadcasting = false
             sendEvent(type: "error", data: "Bluetooth is turned off")
         case .unauthorized:
             print("Peripheral manager unauthorized")
@@ -840,11 +1098,11 @@ extension BLEManager: CBPeripheralManagerDelegate {
             peripheral.respond(to: request, withResult: .invalidHandle)
             return
         }
-        
+
         request.value = data
         peripheral.respond(to: request, withResult: .success)
     }
-    
+
     func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
         // Handle state restoration
     }

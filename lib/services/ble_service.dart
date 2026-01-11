@@ -81,6 +81,7 @@ class BLEService {
   SOSPacket? _currentBroadcast;
   Timer? _broadcastTimer;
   Timer? _cleanupTimer;
+  Timer? _healthCheckTimer;
   bool _isBluetoothOn = false;
   bool _batteryOptimizationRequested = false;
   bool _isInForeground = true;
@@ -108,6 +109,9 @@ class BLEService {
 
   // Broadcast priority tracking
   int _broadcastTick = 0;
+
+  // Track if passive scanning is active (to prevent duplicate scan attempts)
+  bool _isPassiveScanningActive = false;
 
   /// Stream of connection state changes
   Stream<BLEConnectionState> get connectionState =>
@@ -157,19 +161,10 @@ class BLEService {
   /// Number of successful handshakes (packet relays)
   int get handshakeCount => _handshakeCount;
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
   // Track retry attempts for event channel subscription
   int _eventChannelRetryCount = 0;
   static const int _maxEventChannelRetries = 5;
 
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
   /// Whether Bluetooth is currently on
   bool get isBluetoothOn => _isBluetoothOn;
 
@@ -187,6 +182,9 @@ class BLEService {
     // This prevents race condition where Dart subscribes before iOS channel is ready
     Future.delayed(const Duration(milliseconds: 500), () {
       _subscribeToEventChannel();
+      // NOTE: Passive scanning is NOT started here anymore
+      // It will be triggered by the 'bluetoothReady' event from iOS
+      // This fixes the race condition where scanning tried to start before Bluetooth was ready
     });
 
     // Start cleanup timer (every 30 minutes)
@@ -194,6 +192,13 @@ class BLEService {
     _cleanupTimer = Timer.periodic(const Duration(minutes: 30), (_) {
       _packetStore.deleteExpiredPackets();
       _cleanupSeenPackets();
+    });
+
+    // Start health check timer (every 60 seconds)
+    // This ensures passive scanning and event channel stay healthy
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      _performHealthCheck();
     });
 
     // Load user data
@@ -257,9 +262,43 @@ class BLEService {
       debugPrint('Battery optimization request failed: ${e.message}');
       return false;
     }
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
+  }
+
+  /// Perform health check to ensure BLE operations are running
+  void _performHealthCheck() {
+    // Check if event channel subscription is active
+    if (_eventChannelSubscription == null && _eventChannelRetryCount < _maxEventChannelRetries) {
+      debugPrint('BLEService Health Check: Event channel not subscribed, resubscribing...');
+      _subscribeToEventChannel();
+    }
+
+    // Check if passive scanning should be active but isn't
+    if (_isBluetoothOn && !_isPassiveScanningActive && _state != BLEConnectionState.bluetoothOff) {
+      debugPrint('BLEService Health Check: Passive scanning not active, restarting...');
+      _startPassiveScanningWhenReady();
+    }
+  }
+
+  /// Start passive scanning when Bluetooth is confirmed ready
+  /// Called only when iOS sends 'bluetoothReady' event
+  Future<void> _startPassiveScanningWhenReady() async {
+    // Prevent duplicate scan attempts
+    if (_isPassiveScanningActive) {
+      debugPrint('BLEService: Passive scanning already active - skipping');
+      return;
+    }
+
+    try {
+      final result = await startScanning();
+      if (result) {
+        _isPassiveScanningActive = true;
+        debugPrint('BLEService: Passive scanning started successfully - ready to receive SOS signals');
+      } else {
+        debugPrint('BLEService: Failed to start passive scanning - Bluetooth may not be ready');
+      }
+    } catch (e) {
+      debugPrint('BLEService: Error starting passive scanning: $e');
+    }
   }
 
   /// Subscribe to native BLE event channel with retry logic
@@ -305,12 +344,6 @@ class BLEService {
         );
       }
     }
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
   }
 
   /// Reinitialize event channel after app resume (handles stale channel)
@@ -322,72 +355,6 @@ class BLEService {
 
     // Use the same subscription logic with retry
     _subscribeToEventChannel();
-  }
-
-  /// Notify service of app lifecycle changes (for advertising mode switching)
-  void setForegroundState(bool isInForeground) {
-    _isInForeground = isInForeground;
-    debugPrint('App foreground state: $_isInForeground');
-
-    // If actively broadcasting, update advertising mode
-    if (_currentBroadcast != null) {
-      _updateAdvertisingMode();
-    }
-  }
-
-  /// Update advertising mode based on foreground state
-  Future<void> _updateAdvertisingMode() async {
-    try {
-      await _channel.invokeMethod<void>('setAdvertisingMode', {
-        'mode': _isInForeground ? 'lowLatency' : 'balanced',
-      });
-    } catch (e) {
-      debugPrint('Failed to update advertising mode: $e');
-    }
-  }
-
-  /// Notify service of app lifecycle changes (for advertising mode switching)
-  void setForegroundState(bool isInForeground) {
-    _isInForeground = isInForeground;
-    debugPrint('App foreground state: $_isInForeground');
-
-    // If actively broadcasting, update advertising mode
-    if (_currentBroadcast != null) {
-      _updateAdvertisingMode();
-    }
-  }
-
-  /// Update advertising mode based on foreground state
-  Future<void> _updateAdvertisingMode() async {
-    try {
-      await _channel.invokeMethod<void>('setAdvertisingMode', {
-        'mode': _isInForeground ? 'lowLatency' : 'balanced',
-      });
-    } catch (e) {
-      debugPrint('Failed to update advertising mode: $e');
-    }
-  }
-
-  /// Notify service of app lifecycle changes (for advertising mode switching)
-  void setForegroundState(bool isInForeground) {
-    _isInForeground = isInForeground;
-    debugPrint('App foreground state: $_isInForeground');
-
-    // If actively broadcasting, update advertising mode
-    if (_currentBroadcast != null) {
-      _updateAdvertisingMode();
-    }
-  }
-
-  /// Update advertising mode based on foreground state
-  Future<void> _updateAdvertisingMode() async {
-    try {
-      await _channel.invokeMethod<void>('setAdvertisingMode', {
-        'mode': _isInForeground ? 'lowLatency' : 'balanced',
-      });
-    } catch (e) {
-      debugPrint('Failed to update advertising mode: $e');
-    }
   }
 
   /// Notify service of app lifecycle changes (for advertising mode switching)
@@ -488,6 +455,19 @@ class BLEService {
   Future<void> _loadUserData() async {
     _userId = await _packetStore.getUserId();
     _sequence = await _packetStore.getSequence();
+
+    // Send user ID to native layer for self-packet filtering
+    // This prevents receiving notifications for our own SOS broadcasts
+    if (_userId != null) {
+      try {
+        await _channel.invokeMethod<void>('setCurrentUserId', {
+          'userId': _userId,
+        });
+        debugPrint('BLEService: Set native user ID to ${_userId!.toRadixString(16).padLeft(8, '0')}');
+      } catch (e) {
+        debugPrint('BLEService: Failed to set native user ID: $e');
+      }
+    }
   }
 
   // ==========================================================================
@@ -540,6 +520,16 @@ class BLEService {
       case 'error':
         if (data is String) {
           _errorController.add(data);
+        }
+        break;
+      case 'bluetoothReady':
+        // Bluetooth state changed - start passive scanning when ready
+        if (data == true) {
+          debugPrint('BLEService: Received bluetoothReady event - Bluetooth is powered on');
+          _startPassiveScanningWhenReady();
+        } else {
+          debugPrint('BLEService: Bluetooth not ready (powered off or unavailable)');
+          _isPassiveScanningActive = false; // Reset flag so we can restart when ready
         }
         break;
       case 'rawDeviceFound':
@@ -751,16 +741,6 @@ class BLEService {
   // ==========================================================================
 
   /// Start broadcasting own SOS
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-  /// Start broadcasting own SOS
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
   ///
   /// FIX #2: Uses proper advertising modes based on foreground state
   /// - Foreground: LOW_LATENCY for fast discovery
@@ -987,6 +967,38 @@ class BLEService {
     }
   }
 
+  /// Update broadcast location without restarting the entire broadcast
+  /// This prevents sequence number inflation and verification fragmentation
+  Future<void> updateBroadcastLocation({
+    required double latitude,
+    required double longitude,
+  }) async {
+    if (_currentBroadcast == null || _userId == null) {
+      debugPrint('BLEService: Cannot update location - no active broadcast');
+      return;
+    }
+
+    // Create updated packet with new location but same sequence
+    // (don't increment sequence for location updates)
+    final updatedPacket = SOSPacket.create(
+      userId: _userId!,
+      sequence: _currentBroadcast!.sequence,
+      latitude: latitude,
+      longitude: longitude,
+      status: _currentBroadcast!.status,
+    );
+
+    _currentBroadcast = updatedPacket;
+
+    // Update in broadcast queue
+    final queueIndex = _broadcastQueue.indexWhere((p) => p.userId == _userId);
+    if (queueIndex >= 0) {
+      _broadcastQueue[queueIndex] = updatedPacket;
+    }
+
+    debugPrint('BLEService: Updated broadcast location to ($latitude, $longitude)');
+  }
+
   // ==========================================================================
   // SCANNING - FIX #1: iOS BACKGROUND OVERFLOW & FIX #2: ANDROID SCAN FILTERS
   // ==========================================================================
@@ -1051,8 +1063,16 @@ class BLEService {
     return broadcastOk && scanOk;
   }
 
-  /// Stop all BLE operations
+  /// Stop broadcasting but keep scanning active
+  /// Scanning should always be on to receive SOS signals from others
   Future<void> stopAll() async {
+    await stopBroadcasting();
+    // Don't stop scanning - we want to keep receiving SOS signals
+    // Passive scanning is always active to listen for emergencies
+  }
+
+  /// Force stop all BLE operations (only for app shutdown/cleanup)
+  Future<void> forceStopAll() async {
     await stopBroadcasting();
     await stopScanning();
   }
@@ -1151,6 +1171,7 @@ class BLEService {
     _eventChannelSubscription = null;
     _broadcastTimer?.cancel();
     _cleanupTimer?.cancel();
+    _healthCheckTimer?.cancel();
     _connectionStateController.close();
     _packetReceivedController.close();
     _errorController.close();

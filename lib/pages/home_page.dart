@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/ble_service.dart';
 import '../services/connectivity_service.dart' hide AlertLevel;
 import '../services/disaster_service.dart';
 import '../theme/resq_theme.dart';
 import '../painters/custom_borders.dart';
 import '../widgets/sync_status_widget.dart';
+import '../models/sos_packet.dart';
+import '../home_screen.dart';
 import 'disaster_map_page.dart';
 import '../services/platform_service.dart';
 import 'settings_page.dart';
@@ -301,6 +304,7 @@ class _HomePageState extends State<HomePage>
                 value: _getBleStatusText(),
                 color: _getBleStatusColor(colors),
                 colors: colors,
+                onTap: () => _showMeshStatusSheet(colors),
               ),
             ),
             const SizedBox(width: 12),
@@ -313,6 +317,7 @@ class _HomePageState extends State<HomePage>
                     ? colors.accent
                     : colors.textSecondary,
                 colors: colors,
+                onTap: () => _showActiveSOSSheet(colors),
               ),
             ),
           ],
@@ -330,62 +335,70 @@ class _HomePageState extends State<HomePage>
     required String value,
     required Color color,
     required ResQColors colors,
+    VoidCallback? onTap,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: ShapeDecoration(
-        color: colors.surfaceElevated,
-        shape: TacticalCardBorder(
-          topLeftBevel: 12,
-          bottomRightBevel: 12,
-          radius: 8,
-          side: BorderSide(color: colors.meshLine, width: 1),
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.lightImpact();
+        onTap?.call();
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: ShapeDecoration(
+          color: colors.surfaceElevated,
+          shape: TacticalCardBorder(
+            topLeftBevel: 12,
+            bottomRightBevel: 12,
+            radius: 8,
+            side: BorderSide(color: colors.meshLine, width: 1),
+          ),
+          shadows: [
+            BoxShadow(
+              color: colors.shadowColor,
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
-        shadows: [
-          BoxShadow(
-            color: colors.shadowColor,
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: color.withAlpha(38),
-              borderRadius: BorderRadius.circular(8),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: color.withAlpha(38),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: color, size: 18),
             ),
-            child: Icon(icon, color: color, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label.toUpperCase(),
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label.toUpperCase(),
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1,
+                    ),
                   ),
-                ),
-                Text(
-                  value,
-                  style: TextStyle(
-                    color: colors.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
+                  Text(
+                    value,
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            Icon(Icons.chevron_right, color: colors.textSecondary, size: 18),
+          ],
+        ),
       ),
     );
   }
@@ -590,6 +603,640 @@ class _HomePageState extends State<HomePage>
                 const Icon(Icons.arrow_forward, size: 14, color: Colors.orange),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================================
+  // MESH STATUS BOTTOM SHEET
+  // ============================================================================
+
+  void _showMeshStatusSheet(ResQColors colors) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => _MeshStatusSheet(
+        bleService: _bleService,
+        bleState: _bleState,
+        colors: colors,
+      ),
+    );
+  }
+
+  // ============================================================================
+  // ACTIVE SOS BOTTOM SHEET
+  // ============================================================================
+
+  void _showActiveSOSSheet(ResQColors colors) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => _ActiveSOSSheet(
+        bleService: _bleService,
+        colors: colors,
+        onNavigateToMap: (double lat, double lon) {
+          Navigator.pop(context);
+          // Navigate to map tab with coordinates
+          homeScreenKey.currentState?.navigateToEmergency(lat, lon);
+        },
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// MESH STATUS SHEET WIDGET
+// =============================================================================
+
+class _MeshStatusSheet extends StatefulWidget {
+  final BLEService bleService;
+  final BLEConnectionState bleState;
+  final ResQColors colors;
+
+  const _MeshStatusSheet({
+    required this.bleService,
+    required this.bleState,
+    required this.colors,
+  });
+
+  @override
+  State<_MeshStatusSheet> createState() => _MeshStatusSheetState();
+}
+
+class _MeshStatusSheetState extends State<_MeshStatusSheet> {
+  int _connectedDevices = 0;
+  int _echoCount = 0;
+  int _handshakeCount = 0;
+  bool _isScanning = false;
+  StreamSubscription? _stateSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMeshData();
+    _stateSub = widget.bleService.connectionState.listen((_) {
+      _loadMeshData();
+    });
+  }
+
+  @override
+  void dispose() {
+    _stateSub?.cancel();
+    super.dispose();
+  }
+
+  void _loadMeshData() {
+    if (mounted) {
+      setState(() {
+        _connectedDevices = widget.bleService.connectedDevices;
+        _echoCount = widget.bleService.echoCount;
+        _handshakeCount = widget.bleService.handshakeCount;
+        _isScanning = widget.bleState == BLEConnectionState.scanning ||
+            widget.bleState == BLEConnectionState.meshActive;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+
+    return Container(
+      margin: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surfaceElevated,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: colors.meshLine, width: 1),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: colors.meshLine, width: 1),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: _getStatusColor(colors).withAlpha(38),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.bluetooth,
+                    color: _getStatusColor(colors),
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'MESH NETWORK',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      Text(
+                        _getStatusText(),
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: Icon(Icons.close, color: colors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+
+          // Stats Grid
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.devices,
+                        label: 'Connected',
+                        value: '$_connectedDevices',
+                        color: colors.statusOnline,
+                        colors: colors,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.repeat,
+                        label: 'Echoes',
+                        value: '$_echoCount',
+                        color: colors.accentSecondary,
+                        colors: colors,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.handshake,
+                        label: 'Handshakes',
+                        value: '$_handshakeCount',
+                        color: colors.accent,
+                        colors: colors,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.radar,
+                        label: 'Scanning',
+                        value: _isScanning ? 'Active' : 'Idle',
+                        color: _isScanning ? colors.statusOnline : colors.textSecondary,
+                        colors: colors,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Info Text
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: colors.textSecondary, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'The mesh network allows devices to relay SOS signals even without internet connectivity.',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Bottom padding for safe area
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+    required ResQColors colors,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getStatusText() {
+    switch (widget.bleState) {
+      case BLEConnectionState.meshActive:
+        return 'Active';
+      case BLEConnectionState.broadcasting:
+        return 'Broadcasting';
+      case BLEConnectionState.scanning:
+        return 'Scanning';
+      case BLEConnectionState.bluetoothOff:
+        return 'Bluetooth Off';
+      case BLEConnectionState.unavailable:
+        return 'Unavailable';
+      case BLEConnectionState.idle:
+        return 'Idle';
+    }
+  }
+
+  Color _getStatusColor(ResQColors colors) {
+    switch (widget.bleState) {
+      case BLEConnectionState.meshActive:
+        return colors.statusOnline;
+      case BLEConnectionState.broadcasting:
+      case BLEConnectionState.scanning:
+        return colors.accentSecondary;
+      case BLEConnectionState.bluetoothOff:
+      case BLEConnectionState.unavailable:
+        return colors.statusOffline;
+      case BLEConnectionState.idle:
+        return colors.textSecondary;
+    }
+  }
+}
+
+// =============================================================================
+// ACTIVE SOS SHEET WIDGET
+// =============================================================================
+
+class _ActiveSOSSheet extends StatefulWidget {
+  final BLEService bleService;
+  final ResQColors colors;
+  final Function(double lat, double lon) onNavigateToMap;
+
+  const _ActiveSOSSheet({
+    required this.bleService,
+    required this.colors,
+    required this.onNavigateToMap,
+  });
+
+  @override
+  State<_ActiveSOSSheet> createState() => _ActiveSOSSheetState();
+}
+
+class _ActiveSOSSheetState extends State<_ActiveSOSSheet> {
+  List<SOSPacket> _activePackets = [];
+  bool _isLoading = true;
+  StreamSubscription? _packetSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPackets();
+    _packetSub = widget.bleService.onPacketReceived.listen((_) {
+      _loadPackets();
+    });
+  }
+
+  @override
+  void dispose() {
+    _packetSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadPackets() async {
+    final packets = await widget.bleService.getActivePackets();
+    if (mounted) {
+      setState(() {
+        _activePackets = packets;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+
+    return Container(
+      margin: const EdgeInsets.all(16),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.7,
+      ),
+      decoration: BoxDecoration(
+        color: colors.surfaceElevated,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: colors.meshLine, width: 1),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: colors.meshLine, width: 1),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: _activePackets.isNotEmpty
+                        ? colors.accent.withAlpha(38)
+                        : colors.textSecondary.withAlpha(38),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.sensors,
+                    color: _activePackets.isNotEmpty
+                        ? colors.accent
+                        : colors.textSecondary,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'ACTIVE SOS ALERTS',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      Text(
+                        '${_activePackets.length} Signal${_activePackets.length != 1 ? 's' : ''}',
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: Icon(Icons.close, color: colors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+
+          // Content
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(40),
+              child: CircularProgressIndicator(),
+            )
+          else if (_activePackets.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(40),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 64,
+                    color: colors.statusOnline.withAlpha(100),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No Active Emergencies',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'All clear! No SOS signals detected nearby.',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 14,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            )
+          else
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(16),
+                itemCount: _activePackets.length,
+                itemBuilder: (context, index) {
+                  final packet = _activePackets[index];
+                  return _buildSOSCard(packet, colors);
+                },
+              ),
+            ),
+
+          // Bottom padding for safe area
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSOSCard(SOSPacket packet, ResQColors colors) {
+    final statusColor = Color(packet.status.colorValue);
+    final packetTime = DateTime.fromMillisecondsSinceEpoch(packet.timestamp * 1000);
+    final age = DateTime.now().difference(packetTime);
+    final ageText = age.inMinutes < 1
+        ? 'Just now'
+        : age.inMinutes < 60
+            ? '${age.inMinutes}m ago'
+            : '${age.inHours}h ago';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: statusColor.withAlpha(100), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: statusColor.withAlpha(38),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Center(
+                  child: Text(
+                    packet.status.emoji,
+                    style: const TextStyle(fontSize: 20),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      packet.status.label,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'ID: ${packet.userId.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: colors.surfaceElevated,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  ageText,
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Icon(Icons.location_on, color: colors.textSecondary, size: 16),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  '${packet.latitude.toStringAsFixed(5)}, ${packet.longitude.toStringAsFixed(5)}',
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.mediumImpact();
+                  widget.onNavigateToMap(packet.latitude, packet.longitude);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: colors.accent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.map, color: colors.textOnAccent, size: 16),
+                      const SizedBox(width: 4),
+                      Text(
+                        'VIEW',
+                        style: TextStyle(
+                          color: colors.textOnAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

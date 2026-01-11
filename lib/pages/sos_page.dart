@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -8,6 +10,7 @@ import '../models/sos_packet.dart';
 import '../models/sos_status.dart';
 import '../services/ble_service.dart';
 import '../services/connectivity_service.dart';
+import '../services/supabase_service.dart';
 import '../theme/resq_theme.dart';
 import '../utils/rssi_calculator.dart';
 // import '../services/connectivity_service.dart'; // Already imported above if needed, check lines 1-10
@@ -223,11 +226,44 @@ class _SOSPageState extends State<SOSPage>
     super.dispose();
   }
 
-  void _startLocationTracking() {
-    const settings = LocationSettings(
+  /// Get platform-specific location settings for maximum accuracy
+  /// Based on Context7 geolocator documentation
+  LocationSettings _getLocationSettings() {
+    if (kIsWeb) {
+      return const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      );
+    }
+
+    if (Platform.isAndroid) {
+      // Android: Use high accuracy with reasonable interval
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10, // Only update if moved 10m
+        intervalDuration: const Duration(seconds: 5),
+        forceLocationManager: false, // Use FusedLocationProvider for better accuracy
+      );
+    } else if (Platform.isIOS) {
+      // iOS: Use best accuracy for navigation
+      return AppleSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 10,
+        activityType: ActivityType.otherNavigation,
+        pauseLocationUpdatesAutomatically: false,
+        showBackgroundLocationIndicator: true,
+      );
+    }
+
+    // Fallback for other platforms
+    return const LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 10, // Throttle updates: only if moved 10m
+      distanceFilter: 10,
     );
+  }
+
+  void _startLocationTracking() {
+    final settings = _getLocationSettings();
 
     _locationSub?.cancel();
     _locationSub = Geolocator.getPositionStream(locationSettings: settings)
@@ -246,18 +282,51 @@ class _SOSPageState extends State<SOSPage>
                 longitude: position.longitude,
               );
             }
+
+            // Sync location to Supabase for dashboard real-time tracking
+            _syncLocationToCloud(position);
           }
         });
   }
 
-  Future<void> _getCurrentLocation() async {
-    // Only used for initial fix
+  /// Sync current location to Supabase for dashboard visibility
+  Future<void> _syncLocationToCloud(Position position) async {
     try {
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
+      await SupabaseService.instance.updateLocation(
+        position.latitude,
+        position.longitude,
+        accuracy: position.accuracy,
+      );
+    } catch (e) {
+      // Silently fail - location sync is not critical
+      debugPrint('Location sync failed: $e');
+    }
+  }
+
+  Future<void> _getCurrentLocation() async {
+    // Only used for initial fix - use platform-specific high accuracy
+    try {
+      LocationSettings settings;
+
+      if (!kIsWeb && Platform.isIOS) {
+        settings = AppleSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          timeLimit: const Duration(seconds: 10),
+        );
+      } else if (!kIsWeb && Platform.isAndroid) {
+        settings = AndroidSettings(
           accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 5),
-        ),
+          timeLimit: const Duration(seconds: 10),
+        );
+      } else {
+        settings = const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        );
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: settings,
       );
 
       if (mounted) {
@@ -265,6 +334,9 @@ class _SOSPageState extends State<SOSPage>
           _latitude = position.latitude;
           _longitude = position.longitude;
         });
+
+        // Also sync initial location to cloud
+        _syncLocationToCloud(position);
       }
     } catch (e) {
       if (mounted) {
@@ -282,24 +354,55 @@ class _SOSPageState extends State<SOSPage>
     HapticFeedback.heavyImpact();
 
     if (_isBroadcasting) {
+      debugPrint('SOSPage: Stopping broadcast...');
       await _bleService.stopAll();
       _pulseController.stop();
       _locationSub?.cancel(); // Stop tracking location
       setState(() => _isBroadcasting = false);
+      debugPrint('SOSPage: Broadcast stopped');
     } else {
+      debugPrint('SOSPage: Starting broadcast...');
+
+      // Check Bluetooth state first
+      if (_bleState == BLEConnectionState.bluetoothOff) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Bluetooth is off. Please enable Bluetooth.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (_bleState == BLEConnectionState.unavailable) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Bluetooth is unavailable on this device.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
       // Start location tracking first
       _startLocationTracking();
 
       if (_latitude == null || _longitude == null) {
+        debugPrint('SOSPage: Waiting for location...');
         // Wait briefly for location
-        await Future.delayed(const Duration(seconds: 1));
+        await Future.delayed(const Duration(seconds: 2));
       }
 
       if (_latitude == null || _longitude == null) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Location required')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location required. Please enable GPS.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
         return;
       }
 
@@ -309,10 +412,13 @@ class _SOSPageState extends State<SOSPage>
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Invalid GPS (0,0). Waiting for fix...'),
+            backgroundColor: Colors.orange,
           ),
         );
         return;
       }
+
+      debugPrint('SOSPage: Starting mesh mode at ($_latitude, $_longitude)');
 
       final success = await _bleService.startMeshMode(
         latitude: _latitude!,
@@ -321,8 +427,27 @@ class _SOSPageState extends State<SOSPage>
       );
 
       if (success) {
+        debugPrint('SOSPage: Mesh mode started successfully');
         _pulseController.repeat(reverse: true);
         setState(() => _isBroadcasting = true);
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${_selectedStatus.label} SOS broadcast started!'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      } else {
+        debugPrint('SOSPage: Failed to start mesh mode');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to start broadcast. Check Bluetooth permissions.'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -481,18 +606,16 @@ class _SOSPageState extends State<SOSPage>
           ],
         ),
 
-        // Connection Status
+        // Connection Status - consistent with HomePage
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: ShapeDecoration(
-            color: _bleState == BLEConnectionState.meshActive
-                ? colors.statusOnline.withAlpha(30)
-                : colors.surfaceElevated.withAlpha(128),
+            color: _getMeshStatusColor(colors).withAlpha(30),
             shape: const StadiumBorder(),
             shadows: [
-              if (_bleState == BLEConnectionState.meshActive)
+              if (_isMeshActive())
                 BoxShadow(
-                  color: colors.statusOnline.withAlpha(50),
+                  color: _getMeshStatusColor(colors).withAlpha(50),
                   blurRadius: 10,
                 ),
             ],
@@ -503,21 +626,15 @@ class _SOSPageState extends State<SOSPage>
                 width: 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: _bleState == BLEConnectionState.meshActive
-                      ? colors.statusOnline
-                      : colors.textSecondary,
+                  color: _getMeshStatusColor(colors),
                   shape: BoxShape.circle,
                 ),
               ),
               const SizedBox(width: 6),
               Text(
-                _bleState == BLEConnectionState.meshActive
-                    ? 'MESH ACTIVE'
-                    : 'STANDBY',
+                _getMeshStatusText(),
                 style: TextStyle(
-                  color: _bleState == BLEConnectionState.meshActive
-                      ? colors.statusOnline
-                      : colors.textSecondary,
+                  color: _getMeshStatusColor(colors),
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
                 ),
@@ -915,5 +1032,50 @@ class _SOSPageState extends State<SOSPage>
         ],
       ),
     );
+  }
+
+  // ============================================================================
+  // MESH STATUS HELPERS - Consistent with HomePage
+  // ============================================================================
+
+  /// Check if mesh is in any active state (not just meshActive)
+  bool _isMeshActive() {
+    return _bleState == BLEConnectionState.meshActive ||
+        _bleState == BLEConnectionState.broadcasting ||
+        _bleState == BLEConnectionState.scanning;
+  }
+
+  /// Get mesh status text - consistent with HomePage
+  String _getMeshStatusText() {
+    switch (_bleState) {
+      case BLEConnectionState.meshActive:
+        return 'MESH ACTIVE';
+      case BLEConnectionState.broadcasting:
+        return 'SENDING';
+      case BLEConnectionState.scanning:
+        return 'SCANNING';
+      case BLEConnectionState.bluetoothOff:
+        return 'BT OFF';
+      case BLEConnectionState.unavailable:
+        return 'N/A';
+      case BLEConnectionState.idle:
+        return 'STANDBY';
+    }
+  }
+
+  /// Get mesh status color - consistent with HomePage
+  Color _getMeshStatusColor(ResQColors colors) {
+    switch (_bleState) {
+      case BLEConnectionState.meshActive:
+        return colors.statusOnline;
+      case BLEConnectionState.broadcasting:
+      case BLEConnectionState.scanning:
+        return colors.accentSecondary;
+      case BLEConnectionState.bluetoothOff:
+      case BLEConnectionState.unavailable:
+        return colors.statusOffline;
+      case BLEConnectionState.idle:
+        return colors.textSecondary;
+    }
   }
 }

@@ -110,10 +110,29 @@ class NotificationService {
     }
   }
 
+  // Track notification timestamps per user to prevent spam
+  final Map<int, DateTime> _notificationTimestamps = {};
+  static const Duration _notificationCooldown = Duration(seconds: 30);
+
   /// Show a local notification for received SOS
   Future<void> showSOSNotification(SOSPacket packet) async {
     // Don't notify for safe status
-    if (packet.status == SOSStatus.safe) return;
+    if (packet.status == SOSStatus.safe) {
+      // Clear cooldown so next SOS from this user will show
+      _notificationTimestamps.remove(packet.userId);
+      return;
+    }
+
+    // Check notification cooldown - only one notification per user per 30 seconds
+    final now = DateTime.now();
+    final lastNotification = _notificationTimestamps[packet.userId];
+    if (lastNotification != null && now.difference(lastNotification) < _notificationCooldown) {
+      debugPrint('NotificationService: Cooldown active for user ${packet.userId.toRadixString(16)} - skipping');
+      return;
+    }
+
+    // Update notification timestamp
+    _notificationTimestamps[packet.userId] = now;
 
     final payload = jsonEncode({
       'lat': packet.latitude,

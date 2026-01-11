@@ -54,6 +54,7 @@ class SupabaseService {
 
   // State
   Timer? _syncTimer;
+  Timer? _heartbeatTimer;
   bool _isSyncing = false;
   bool _isInitialized = false;
   StreamSubscription<bool>? _connectivitySub;
@@ -91,6 +92,7 @@ class SupabaseService {
   Future<void> initialize() async {
     // Cancel any existing timers/subscriptions from previous app session (iOS force quit recovery)
     _syncTimer?.cancel();
+    _heartbeatTimer?.cancel();
     _connectivitySub?.cancel();
 
     if (_isInitialized) return;
@@ -126,9 +128,21 @@ class SupabaseService {
         },
       );
 
+      // Start periodic heartbeat (every 60 seconds)
+      // This ensures the device shows as "active" on the dashboard
+      _heartbeatTimer = Timer.periodic(
+        const Duration(seconds: 60),
+        (_) {
+          if (_connectivity.isOnline) {
+            updateHeartbeat();
+          }
+        },
+      );
+
       // Initial sync if online
       if (_connectivity.isOnline) {
         syncPendingPackets();
+        updateHeartbeat(); // Send initial heartbeat
       }
     } catch (e) {
       _isInitialized = false;
@@ -400,6 +414,7 @@ class SupabaseService {
   /// Dispose resources
   void dispose() {
     _syncTimer?.cancel();
+    _heartbeatTimer?.cancel();
     _connectivitySub?.cancel();
     _syncStatusController.close();
     _lastSyncController.close();

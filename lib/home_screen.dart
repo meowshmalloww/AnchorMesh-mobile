@@ -71,8 +71,17 @@ class HomeScreenState extends State<HomeScreen> {
   void _setupPacketListener() {
     _packetSubscription?.cancel();
     _packetSubscription = _bleService.onPacketReceived.listen(
-      (packet) {
-        // Show notification and in-app alert for new SOS packets
+      (packet) async {
+        // Get our own userId to filter out self-packets
+        final myUserId = await _bleService.getUserId();
+
+        // Don't show notification for our own packets
+        if (packet.userId == myUserId) {
+          debugPrint('HomeScreen: Filtering own packet from notification');
+          return;
+        }
+
+        // Show notification and in-app alert for new SOS packets from others
         if (packet.status != SOSStatus.safe) {
           NotificationService.instance.showSOSNotification(packet);
         }
