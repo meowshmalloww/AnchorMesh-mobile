@@ -7,7 +7,7 @@ enum SOSStatus {
   safe(0x00, 'SAFE', 'I am safe'),
 
   /// 0x01: General SOS, needs rescue
-  sos(0x01, 'SOS', 'Need rescue'),
+  sos(0x01, 'EMERGENCY', 'Need rescue'),
 
   /// 0x02: Medical emergency
   medical(0x02, 'MEDICAL', 'Medical emergency'),
@@ -54,13 +54,30 @@ enum SOSStatus {
       case SOSStatus.safe:
         return Icons.check_circle;
       case SOSStatus.sos:
-        return Icons.sos;
+        return Icons.emergency;
       case SOSStatus.medical:
         return Icons.medical_services;
       case SOSStatus.trapped:
-        return Icons.warning; // best approximation for trapped if person_pin not avail or specific
+        return Icons
+            .warning; // best approximation for trapped if person_pin not avail or specific
       case SOSStatus.supplies:
         return Icons.local_drink;
+    }
+  }
+
+  /// Get emoji for notifications
+  String get emoji {
+    switch (this) {
+      case SOSStatus.safe:
+        return '✅';
+      case SOSStatus.sos:
+        return '🆘';
+      case SOSStatus.medical:
+        return '🏥';
+      case SOSStatus.trapped:
+        return '🚨';
+      case SOSStatus.supplies:
+        return '📦';
     }
   }
 }

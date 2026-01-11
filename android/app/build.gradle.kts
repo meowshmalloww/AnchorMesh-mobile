@@ -6,11 +6,13 @@ plugins {
 }
 
 android {
-    namespace = "com.development.heyblue"
+    namespace = "com.development.anchormesh"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // Enable core library desugaring for flutter_local_notifications
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -21,13 +23,16 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.development.heyblue"
+        applicationId = "com.development.anchormesh"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        
+        // Required for desugaring
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -40,6 +45,8 @@ android {
 }
 
 dependencies {
+    // Core library desugaring for Java 8+ APIs
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     // WorkManager for background tasks
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

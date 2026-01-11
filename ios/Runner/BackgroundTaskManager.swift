@@ -10,8 +10,8 @@ class BackgroundTaskManager {
     static let shared = BackgroundTaskManager()
     
     // Task identifiers
-    static let refreshTaskId = "com.development.heyblue.mesh.refresh"
-    static let processingTaskId = "com.development.heyblue.mesh.processing"
+    static let refreshTaskId = "com.development.anchormesh.mesh.refresh"
+    static let processingTaskId = "com.development.anchormesh.mesh.processing"
     
     // USGS API
     static let usgsAPI = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_hour.geojson"
@@ -20,7 +20,7 @@ class BackgroundTaskManager {
     
     /// Register background tasks with iOS
     func registerTasks() {
-        // Register refresh task (runs every 15 min when possible)
+        // Register refresh task (runs every 5 min when possible)
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: BackgroundTaskManager.refreshTaskId,
             using: nil
@@ -48,7 +48,7 @@ class BackgroundTaskManager {
     /// Schedule the next background fetch
     func scheduleRefresh() {
         let request = BGAppRefreshTaskRequest(identifier: BackgroundTaskManager.refreshTaskId)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 minutes
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 5 * 60) // 5 minutes (iOS minimum for reliable scheduling)
         
         do {
             try BGTaskScheduler.shared.submit(request)
@@ -164,7 +164,7 @@ class DisasterCheckOperation: Operation {
         let content = UNMutableNotificationContent()
         content.title = hasDisaster ? "⚠️ Disaster Alert" : "📡 Mesh Mode"
         content.body = hasDisaster 
-            ? "Earthquake detected. Mesh SOS activated."
+            ? "Earthquake detected. AnchorMesh activated."
             : "Internet unavailable. Mesh mode recommended."
         content.sound = .default
         

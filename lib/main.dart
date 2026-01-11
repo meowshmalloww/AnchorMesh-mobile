@@ -1,26 +1,70 @@
+import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
+import 'pages/onboarding_page.dart';
+import 'services/onboarding_service.dart';
 import 'theme_notifier.dart';
+import 'theme/resq_theme.dart';
 import 'services/platform_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/supabase_service.dart';
+import 'services/ble_service.dart';
+import 'services/packet_store.dart';
+import 'services/notification_service.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Handle Flutter errors gracefully
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
+    debugPrint('Flutter error: ${details.exception}\n${details.stack}');
   };
 
-  // Initialize platform service
-  PlatformService.instance;
+  // Catch uncaught async errors (MethodChannel failures, platform exceptions, etc.)
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('Uncaught platform error: $error\n$stack');
+    return true; // Error handled, don't propagate
+  };
 
-  // Start connectivity and disaster monitoring
-  ConnectivityChecker.instance.startMonitoring();
-  DisasterMonitor.instance.startMonitoring();
+  // Initialize notification service with error handling
+  try {
+    await NotificationService.instance.initialize();
+  } catch (e) {
+    // Notification init failure is non-fatal - app still works
+    debugPrint('Notification service initialization failed: $e');
+  }
+
+  // Initialize platform service with error handling
+  try {
+    PlatformService.instance;
+  } catch (e) {
+    debugPrint('Platform service initialization failed: $e');
+  }
+
+  // Start connectivity and disaster monitoring with error handling
+  try {
+    ConnectivityChecker.instance.startMonitoring();
+    DisasterMonitor.instance.startMonitoring();
+  } catch (e) {
+    debugPrint('Monitoring services initialization failed: $e');
+  }
+
+  // Initialize Supabase for cloud sync
+  try {
+    await SupabaseService.instance.initialize();
+  } catch (e) {
+    // Supabase init failure is non-fatal - app works offline
+    debugPrint('Supabase initialization failed: $e');
+  }
 
   // Start auto-activate monitoring (activates mesh on 3 failed pings)
-  PlatformService.instance.startAutoActivateMonitoring();
+  try {
+    PlatformService.instance.startAutoActivateMonitoring();
+  } catch (e) {
+    debugPrint('Auto-activate monitoring failed: $e');
+  }
 
   runApp(const MyApp());
 }
@@ -33,6 +77,8 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  StreamSubscription<bool>? _autoActivateSub;
+
   @override
   void initState() {
     super.initState();
@@ -42,7 +88,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _checkLowPowerMode();
 
     // Listen for auto-activate events
-    PlatformService.instance.autoActivateStream.listen((activated) {
+    _autoActivateSub = PlatformService.instance.autoActivateStream.listen((
+      activated,
+    ) {
       if (activated) {
         _showAutoActivateAlert();
       }
@@ -51,6 +99,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _autoActivateSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -58,9 +107,36 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // App came to foreground - check low power mode
+      // App came to foreground - reset services that may have stale state from iOS force quit
+      _resetServicesOnResume();
       _checkLowPowerMode();
+    } else if (state == AppLifecycleState.detached) {
+      // App is being terminated - cleanup all services
+      _disposeAllServices();
     }
+  }
+
+  /// Reset services on app resume (handles iOS force quit recovery)
+  /// On iOS, Dart VM can persist across force quits, leaving stale database/timer state
+  Future<void> _resetServicesOnResume() async {
+    try {
+      // Reset stale database connections
+      await PacketStore.reset();
+      // Reinitialize BLE event channel
+      BLEService.instance.reinitializeEventChannel();
+    } catch (e) {
+      debugPrint('Error resetting services on resume: $e');
+    }
+  }
+
+  /// Dispose all global services when app terminates
+  void _disposeAllServices() {
+    debugPrint('Disposing all services...');
+    ConnectivityChecker.instance.dispose();
+    DisasterMonitor.instance.dispose();
+    SupabaseService.instance.dispose();
+    PlatformService.instance.dispose();
+    BLEService.instance.dispose();
   }
 
   Future<void> _checkLowPowerMode() async {
@@ -137,25 +213,53 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       builder: (context, themeMode, child) {
         return MaterialApp(
           navigatorKey: navigatorKey,
-          title: 'Mesh SOS',
+          title: 'AnchorMesh',
           debugShowCheckedModeBanner: false,
           themeMode: themeMode,
           theme: ThemeData(
             brightness: Brightness.light,
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-            scaffoldBackgroundColor: Colors.white,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFFE63946),
+              brightness: Brightness.light,
+            ),
+            scaffoldBackgroundColor: ResQColors.light.surface,
             useMaterial3: true,
+            extensions: const [ResQColors.light],
           ),
           darkTheme: ThemeData(
             brightness: Brightness.dark,
-            scaffoldBackgroundColor: Colors.black,
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFFFF4757),
+              brightness: Brightness.dark,
+            ),
+            scaffoldBackgroundColor: ResQColors.dark.surface,
+            appBarTheme: AppBarTheme(
+              backgroundColor: ResQColors.dark.surface,
+              foregroundColor: ResQColors.dark.textPrimary,
             ),
             useMaterial3: true,
+            extensions: const [ResQColors.dark],
           ),
-          home: const HomeScreen(),
+          home: FutureBuilder<bool>(
+            future: OnboardingService.instance.isOnboardingComplete(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                // Show loading state while checking onboarding status
+                return const Scaffold(
+                  body: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+
+              final isComplete = snapshot.data ?? false;
+              if (isComplete) {
+                return HomeScreen(key: homeScreenKey);
+              } else {
+                return const OnboardingPage();
+              }
+            },
+          ),
         );
       },
     );

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'package:battery_plus/battery_plus.dart';
 import 'connectivity_service.dart';
 
 /// Platform-specific service for iOS/Android features
@@ -52,7 +53,7 @@ class PlatformService {
     _channel.setMethodCallHandler(_handleMethodCall);
 
     // Check initial low power mode state
-    _checkLowPowerMode();
+    checkLowPowerMode();
   }
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
@@ -83,25 +84,22 @@ class PlatformService {
   // Low Power Mode (iOS)
   // ==================
 
-  /// Check if device is in Low Power Mode (iOS)
-  Future<bool> _checkLowPowerMode() async {
-    if (!Platform.isIOS) {
-      return false;
-    }
+  // ==================
+  // Low Power Mode (using battery_plus)
+  // ==================
 
-    try {
-      final result = await _channel.invokeMethod<bool>('isLowPowerModeEnabled');
-      _isLowPowerModeEnabled = result ?? false;
-      return _isLowPowerModeEnabled;
-    } on PlatformException catch (e) {
-      debugPrint('Failed to check low power mode: ${e.message}');
-      return false;
-    }
-  }
+  final _battery = Battery();
 
   /// Check if device is in Low Power Mode
   Future<bool> checkLowPowerMode() async {
-    return _checkLowPowerMode();
+    try {
+      _isLowPowerModeEnabled = await _battery.isInBatterySaveMode;
+      _lowPowerModeController.add(_isLowPowerModeEnabled);
+      return _isLowPowerModeEnabled;
+    } catch (e) {
+      debugPrint('Failed to check battery save mode: $e');
+      return false;
+    }
   }
 
   // ==================

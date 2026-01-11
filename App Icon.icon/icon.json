@@ -1,0 +1,61 @@
+{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "fill" : "system-dark",
+  "groups" : [
+    {
+      "name" : "Network Icon",
+      "layers" : [
+        {
+          "name" : "network",
+          "image-name" : "network.svg",
+          "fill" : {
+            "linear-gradient" : [
+              "srgb:1.00000,0.14913,0.00000,1.00000",
+              "srgb:1.00000,0.57811,0.00000,1.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 0
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 1.0
+              }
+            }
+          },
+          "position" : {
+            "scale" : 0.6,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "mode" : "combined",
+      "specular" : true,
+      "blur" : {
+        "enabled" : true,
+        "value" : 0.3
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.4
+      },
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.4
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "iOS" : "squares",
+    "iPadOS" : "squares",
+    "macOS" : "squares",
+    "watchOS" : "circles"
+  }
+}

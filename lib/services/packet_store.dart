@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:developer' as developer;
+import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/sos_packet.dart';
@@ -9,6 +11,7 @@ import '../models/sos_status.dart';
 class PacketStore {
   static PacketStore? _instance;
   static Database? _database;
+  static Completer<Database>? _initCompleter;
 
   PacketStore._();
 
@@ -17,11 +20,50 @@ class PacketStore {
     return _instance!;
   }
 
-  /// Get database instance
+  /// Reset database connection for app restart (iOS force quit recovery)
+  /// This clears stale database handles that persist across Dart VM restarts on iOS
+  static Future<void> reset() async {
+    // Wait for any pending initialization to complete first
+    if (_initCompleter != null && !_initCompleter!.isCompleted) {
+      try {
+        await _initCompleter!.future;
+      } catch (_) {
+        // Ignore - we're resetting anyway
+      }
+    }
+    _initCompleter = null;
+
+    if (_database != null) {
+      try {
+        await _database!.close();
+      } catch (_) {
+        // Ignore close errors - database may already be closed/invalid
+      }
+      _database = null;
+    }
+  }
+
+  /// Get database instance (thread-safe with lock)
   Future<Database> get database async {
+    // Fast path: already initialized
     if (_database != null) return _database!;
-    _database = await _initDatabase();
-    return _database!;
+
+    // Check if initialization is in progress
+    if (_initCompleter != null) {
+      return _initCompleter!.future;
+    }
+
+    // Start initialization with lock
+    _initCompleter = Completer<Database>();
+    try {
+      _database = await _initDatabase();
+      _initCompleter!.complete(_database!);
+      return _database!;
+    } catch (e) {
+      _initCompleter!.completeError(e);
+      _initCompleter = null;
+      rethrow;
+    }
   }
 
   /// Initialize database
@@ -29,9 +71,12 @@ class PacketStore {
     final path = join(await getDatabasesPath(), 'sos_packets.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onOpen: (db) async {
+        await _deleteOldPackets(db);
+      },
     );
   }
 
@@ -41,6 +86,13 @@ class PacketStore {
       // Version 2: Add targetId for direct messaging
       await db.execute(
         'ALTER TABLE packets ADD COLUMN targetId INTEGER DEFAULT 0',
+      );
+    }
+    if (oldVersion < 3) {
+      // Version 3: Add isLocalOrigin to track packets created by this device
+      // Local origin packets should NEVER be synced to cloud
+      await db.execute(
+        'ALTER TABLE packets ADD COLUMN isLocalOrigin INTEGER DEFAULT 0',
       );
     }
   }
@@ -61,6 +113,8 @@ class PacketStore {
         isSynced INTEGER DEFAULT 0,
         targetId INTEGER DEFAULT 0,
         receivedAt INTEGER NOT NULL,
+        isArchived INTEGER DEFAULT 0,
+        isLocalOrigin INTEGER DEFAULT 0,
         UNIQUE(userId, sequence)
       )
     ''');
@@ -92,12 +146,50 @@ class PacketStore {
       )
     ''');
 
-    // Create indexes
-    await db.execute('CREATE INDEX idx_packets_user ON packets(userId)');
+    // Create indexes for performance
     await db.execute(
-      'CREATE INDEX idx_packets_timestamp ON packets(timestamp)',
+      'CREATE INDEX IF NOT EXISTS idx_packets_user ON packets (userId)',
     );
-    await db.execute('CREATE INDEX idx_packets_synced ON packets(isSynced)');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_packets_timestamp ON packets (timestamp)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_seen_uniqueId ON seen_packets (uniqueId)',
+    );
+
+    // Cleanup old packets on init
+    await _deleteOldPackets(db);
+  }
+
+  /// Delete packets older than 24 hours to keep DB lean
+  Future<void> _deleteOldPackets(Database db) async {
+    try {
+      final cutoff =
+          DateTime.now()
+              .subtract(const Duration(hours: 24))
+              .millisecondsSinceEpoch ~/
+          1000;
+      await db.delete('packets', where: 'timestamp < ?', whereArgs: [cutoff]);
+
+      // Also cleanup seen_packets (using milliseconds)
+      final seenCutoff = DateTime.now()
+          .subtract(const Duration(hours: 24))
+          .millisecondsSinceEpoch;
+      await db.delete(
+        'seen_packets',
+        where: 'seenAt < ?',
+        whereArgs: [seenCutoff],
+      );
+
+      // Cleanup broadcast queue for old packets
+      await db.rawDelete('''
+        DELETE FROM broadcast_queue 
+        WHERE packetId NOT IN (SELECT id FROM packets)
+      ''');
+    } catch (e) {
+      // Ignore cleanup errors during init
+      developer.log('Database cleanup error: $e');
+    }
   }
 
   // ==================
@@ -109,35 +201,60 @@ class PacketStore {
   Future<bool> savePacket(SOSPacket packet) async {
     final db = await database;
 
-    // Check if we've seen this packet before
-    if (await hasSeenPacket(packet.uniqueId)) {
-      // Check if this is a newer sequence from same user
-      final existing = await getPacketByUserId(packet.userId);
-      if (existing != null && packet.sequence > existing.sequence) {
-        // Update to newer version
-        await db.update(
-          'packets',
-          packet.toJson()
-            ..['receivedAt'] = DateTime.now().millisecondsSinceEpoch,
-          where: 'userId = ?',
-          whereArgs: [packet.userId],
-        );
-        await _markSeen(packet.uniqueId);
-        return true;
-      }
-      return false; // Duplicate, ignore
-    }
-
-    // Check if expired
-    if (packet.isExpired) {
-      return false;
-    }
-
     try {
+      if (await hasSeenPacket(packet.uniqueId)) {
+        // Check if this is a newer sequence from same user
+        final existing = await getPacketByUserId(packet.userId);
+        if (existing != null && packet.sequence > existing.sequence) {
+          // Update to newer version
+          await db.update(
+            'packets',
+            packet.toJson()
+              ..['receivedAt'] = DateTime.now().millisecondsSinceEpoch,
+            where: 'userId = ?',
+            whereArgs: [packet.userId],
+          );
+          await _markSeen(packet.uniqueId);
+          return true;
+        }
+        return false; // Duplicate, ignore
+      }
+
+      // Check if expired
+      if (packet.isExpired) {
+        return false;
+      }
+
       // Insert new packet
       await db.insert(
         'packets',
         packet.toJson()..['receivedAt'] = DateTime.now().millisecondsSinceEpoch,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      // Mark seen immediately
+      await _markSeen(packet.uniqueId);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Save a locally-created packet (from this device)
+  /// These packets are marked as local origin and will NEVER be synced to cloud
+  /// Use this for packets created by this device (e.g., targeted messages)
+  Future<bool> saveLocalPacket(SOSPacket packet) async {
+    final db = await database;
+
+    try {
+      final packetJson = packet.toJson()
+        ..['receivedAt'] = DateTime.now().millisecondsSinceEpoch
+        ..['isLocalOrigin'] = 1
+        ..['isSynced'] =
+            1; // Mark as "synced" so it's never picked up for cloud sync
+
+      await db.insert(
+        'packets',
+        packetJson,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
       await _markSeen(packet.uniqueId);
@@ -188,19 +305,28 @@ class PacketStore {
         DateTime.now().millisecondsSinceEpoch ~/ 1000 - SOSPacket.maxAgeSeconds;
     final result = await db.query(
       'packets',
-      where: 'timestamp > ? AND status != ?',
+      where: 'timestamp > ? AND status != ? AND isArchived = 0',
       whereArgs: [cutoff, SOSStatus.safe.code],
       orderBy: 'timestamp DESC',
     );
     return result.map((r) => SOSPacket.fromJson(r)).toList();
   }
 
+  /// Get all history packets (including archived)
+  Future<List<SOSPacket>> getHistoryPackets() async {
+    final db = await database;
+    final result = await db.query('packets', orderBy: 'receivedAt DESC');
+    return result.map((r) => SOSPacket.fromJson(r)).toList();
+  }
+
   /// Get unsynced packets for cloud upload
+  /// CRITICAL: Only returns packets received via BLE (not locally created)
+  /// This ensures the sender device NEVER syncs its own SOS to the cloud
   Future<List<SOSPacket>> getUnsyncedPackets() async {
     final db = await database;
     final result = await db.query(
       'packets',
-      where: 'isSynced = 0',
+      where: 'isSynced = 0 AND isLocalOrigin = 0',
       orderBy: 'timestamp ASC',
     );
     return result.map((r) => SOSPacket.fromJson(r)).toList();
@@ -208,10 +334,16 @@ class PacketStore {
 
   /// Mark packets as synced
   Future<void> markSynced(List<int> packetIds) async {
+    if (packetIds.isEmpty) return;
     final db = await database;
-    await db.update('packets', {
-      'isSynced': 1,
-    }, where: 'id IN (${packetIds.join(',')})');
+    // Use parameterized query to prevent SQL injection
+    final placeholders = List.filled(packetIds.length, '?').join(',');
+    await db.update(
+      'packets',
+      {'isSynced': 1},
+      where: 'id IN ($placeholders)',
+      whereArgs: packetIds,
+    );
   }
 
   /// Delete old packets (cleanup)
@@ -220,11 +352,21 @@ class PacketStore {
     final cutoff =
         DateTime.now().millisecondsSinceEpoch ~/ 1000 - SOSPacket.maxAgeSeconds;
 
-    // Delete expired packets
-    final deletedPackets = await db.delete(
+    // Archive expired packets instead of deleting
+    final archivedCount = await db.update(
+      'packets',
+      {'isArchived': 1},
+      where: 'timestamp < ? AND isArchived = 0',
+      whereArgs: [cutoff],
+    );
+
+    // Delete very old history (e.g. > 30 days) to save space
+    final historyCutoff =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 - (86400 * 30);
+    await db.delete(
       'packets',
       where: 'timestamp < ?',
-      whereArgs: [cutoff],
+      whereArgs: [historyCutoff],
     );
 
     // Delete old seen entries (keep last 24 hours)
@@ -237,7 +379,20 @@ class PacketStore {
       whereArgs: [seenCutoff],
     );
 
-    return deletedPackets;
+    return archivedCount;
+  }
+
+  /// Get storage usage in bytes (estimate)
+  Future<int> getStorageSize() async {
+    final db = await database;
+    final path = db.path;
+    try {
+      final file = File(path); // Requires dart:io
+      if (await file.exists()) {
+        return await file.length();
+      }
+    } catch (_) {}
+    return 0;
   }
 
   /// Clear all local data (packets, seen entries, queue)
@@ -248,6 +403,20 @@ class PacketStore {
       await txn.delete('seen_packets');
       await txn.delete('broadcast_queue');
     });
+  }
+
+  /// Clear history only (archived + expired packets, keep active ones)
+  Future<int> clearHistory() async {
+    final db = await database;
+    final cutoff =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 - SOSPacket.maxAgeSeconds;
+
+    // Delete archived or expired packets
+    return await db.delete(
+      'packets',
+      where: 'isArchived = 1 OR timestamp < ? OR status = ?',
+      whereArgs: [cutoff, SOSStatus.safe.index],
+    );
   }
 
   // ==================
