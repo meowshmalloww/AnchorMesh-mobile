@@ -214,7 +214,7 @@ Earthquakes, tsunamis, volcanic eruptions, floods, hurricanes, tornadoes, wildfi
 
 This software is provided for **hackathon evaluation only**. See [LICENSE](LICENSE) for details.
 
-Copyright (c) 2026 ResQ Team. All Rights Reserved.
+Copyright (c) 2026 AnchorMesh Team. All Rights Reserved.
 
 ---
 
