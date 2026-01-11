@@ -162,7 +162,7 @@ lib/
 │       ├── compass_pointer.dart
 │       └── ultrasonic_control.dart
 └── theme/
-    └── resq_theme.dart
+    └── anchormesh_theme.dart
 ```
 
 ---
