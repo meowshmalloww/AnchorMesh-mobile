@@ -1,24 +1,6 @@
-HACKATHON EVALUATION LICENSE
-
 Copyright (c) 2026 AnchorMesh Team. All Rights Reserved.
 
-TERMS AND CONDITIONS
+The source code, design, and architecture of this software are the exclusive property of the AnchorMesh Team.
 
-1. PURPOSE
-   This software is submitted for evaluation in the 2025 Alameda Hackathon. It is provided solely for the purposes of judging, testing, and reviewing functionality during the event period.
-
-2. GRANTED RIGHTS
-   You are hereby granted permission to:
-   - READ the source code for evaluation purposes.
-   - RUN the compiled application on devices for testing purposes.
-   - TEST the functionality of the software as intended.
-
-3. RESTRICTIONS
-   You are strictly PROHIBITED from:
-   - COPYING any part of this source code for use in other projects.
-   - MODIFYING the source code or creating derivative works.
-   - REDISTRIBUTING this software in source or binary form.
-   - USING this software for any commercial purpose.
-
-4. NO WARRANTY
-   THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. THE AUTHORS MAKE NO REPRESENTATIONS OR WARRANTIES OF ANY KIND CONCERNING THE SAFETY, SUITABILITY, LACK OF VIRUSES, INACCURACIES, TYPOGRAPHICAL ERRORS, OR OTHER HARMFUL COMPONENTS OF THIS SOFTWARE.
+Unauthorized copying, modification, distribution, or use of this file, via any medium, is strictly prohibited.
+This software is provided for evaluation purposes only during the 2025 Alameda Hackathon.
