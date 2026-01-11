@@ -64,6 +64,9 @@ class BLEManager: NSObject {
     private let connectionThrottleInterval: TimeInterval = 10.0 // 10 seconds (was 5s - reduced to prevent spam)
     
     // Native-level deduplication to prevent looping
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     // Key: "userId-sequence", Value: timestamp when first seen
     private var seenPackets: [String: Date] = [:]
