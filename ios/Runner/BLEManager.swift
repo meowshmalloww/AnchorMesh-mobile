@@ -50,14 +50,24 @@ class BLEManager: NSObject {
     
     // Track last packet reception time per device to avoid duplicates
     private var lastPacketTimestamps: [UUID: Date] = [:]
-    private let packetDedupeInterval: TimeInterval = 2.0 // 2 seconds - allows for reliable mesh relay
+    private let packetDedupeInterval: TimeInterval = 0.8 // Reduced from 2.0 for faster multi-device broadcast
 
     // Track recently seen packet hashes to dedupe
     private var recentPacketHashes: Set<Int> = []
 
     // Track packet content hashes with timestamps for smarter deduplication
     private var packetHashTimestamps: [Int: Date] = [:]
-    
+
+    // Current user ID for filtering own packets from notifications
+    private var currentUserId: UInt32? = nil
+
+    // Connection pool for parallel connections
+    private var pendingConnections: [CBPeripheral] = []
+    private let maxConcurrentConnections = 3
+
+    // Scheduled disconnect timers for connection caching
+    private var disconnectTimers: [UUID: DispatchWorkItem] = [:]
+
     // MARK: - Singleton
     
     static let shared = BLEManager()
@@ -135,6 +145,9 @@ class BLEManager: NSObject {
 
         // Request notification permission for SOS alerts
         requestNotificationPermission()
+
+        // Start periodic cleanup timer for memory management
+        startCleanupTimer()
     }
 
     /// Reset manager state for new Flutter engine connection (app relaunch)
@@ -175,6 +188,19 @@ class BLEManager: NSObject {
         }
     }
 
+    // MARK: - User ID Management
+
+    /// Set current user ID for filtering own packets from notifications
+    func setCurrentUserId(_ userId: UInt32) {
+        self.currentUserId = userId
+        print("BLEManager: Current user ID set to \(String(format: "%08X", userId))")
+    }
+
+    /// Get current user ID (for debugging)
+    func getCurrentUserId() -> UInt32? {
+        return currentUserId
+    }
+
     // MARK: - Notification Setup
 
     func requestNotificationPermission() {
@@ -191,6 +217,18 @@ class BLEManager: NSObject {
         // Parse packet to extract status (byte 16) and location
         guard packetData.count >= 21 else {
             print("Packet too small for notification: \(packetData.count)")
+            return
+        }
+
+        // Extract userId from packet (bytes 2-5, big-endian as per packet spec)
+        let packetUserId = UInt32(packetData[2]) << 24 |
+                          UInt32(packetData[3]) << 16 |
+                          UInt32(packetData[4]) << 8 |
+                          UInt32(packetData[5])
+
+        // Filter out own packets - don't show notification for our own SOS
+        if let currentId = currentUserId, packetUserId == currentId {
+            print("Filtering own packet from notification (userId: \(String(format: "%08X", packetUserId)))")
             return
         }
 
@@ -562,12 +600,116 @@ class BLEManager: NSObject {
         showSOSNotification(packetData: testPacket)
     }
 
+    // MARK: - Connection Pool Management
+
+    /// Process pending connection queue - allows parallel connections up to limit
+    private func processConnectionQueue() {
+        guard let central = centralManager else { return }
+
+        let availableSlots = maxConcurrentConnections - connectedPeripherals.count
+        guard availableSlots > 0 else {
+            print("Connection pool full (\(connectedPeripherals.count)/\(maxConcurrentConnections))")
+            return
+        }
+
+        let connectionsToMake = min(availableSlots, pendingConnections.count)
+        guard connectionsToMake > 0 else { return }
+
+        for _ in 0..<connectionsToMake {
+            guard !pendingConnections.isEmpty else { break }
+            let peripheral = pendingConnections.removeFirst()
+
+            // Skip if already connected or connecting
+            guard !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }),
+                  peripheral.state != .connecting else {
+                continue
+            }
+
+            print("Connecting to peripheral (pool: \(connectedPeripherals.count + 1)/\(maxConcurrentConnections), queued: \(pendingConnections.count))")
+            central.connect(peripheral, options: nil)
+        }
+    }
+
+    /// Schedule a delayed disconnect for connection caching
+    private func scheduleDelayedDisconnect(for peripheral: CBPeripheral, after seconds: TimeInterval = 30) {
+        // Cancel any existing timer for this peripheral
+        disconnectTimers[peripheral.identifier]?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            print("Delayed disconnect for peripheral: \(peripheral.identifier)")
+            self.centralManager?.cancelPeripheralConnection(peripheral)
+            self.disconnectTimers.removeValue(forKey: peripheral.identifier)
+        }
+
+        disconnectTimers[peripheral.identifier] = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: workItem)
+    }
+
+    /// Cancel delayed disconnect (e.g., when new data received)
+    private func cancelDelayedDisconnect(for peripheral: CBPeripheral) {
+        disconnectTimers[peripheral.identifier]?.cancel()
+        disconnectTimers.removeValue(forKey: peripheral.identifier)
+    }
+
+    /// Clean up stale peripherals and packet timestamps (called periodically)
+    private func cleanupStalePeripherals() {
+        let now = Date()
+        let staleThreshold: TimeInterval = 300 // 5 minutes
+
+        // Clean up old packet timestamps
+        let oldTimestampCount = lastPacketTimestamps.count
+        lastPacketTimestamps = lastPacketTimestamps.filter {
+            now.timeIntervalSince($0.value) < staleThreshold
+        }
+
+        // Clean up old packet hashes
+        let oldHashCount = packetHashTimestamps.count
+        packetHashTimestamps = packetHashTimestamps.filter {
+            now.timeIntervalSince($0.value) < 60 // 1 minute for hash cache
+        }
+
+        // Clean up discovered peripherals that are no longer connected and have stale timestamps
+        let oldDiscoveredCount = discoveredPeripherals.count
+        discoveredPeripherals.removeAll { peripheral in
+            let notConnected = !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier })
+            let notPending = !pendingConnections.contains(where: { $0.identifier == peripheral.identifier })
+            let isStale = lastPacketTimestamps[peripheral.identifier] == nil
+            return notConnected && notPending && isStale
+        }
+
+        let cleanedTimestamps = oldTimestampCount - lastPacketTimestamps.count
+        let cleanedHashes = oldHashCount - packetHashTimestamps.count
+        let cleanedPeripherals = oldDiscoveredCount - discoveredPeripherals.count
+
+        if cleanedTimestamps > 0 || cleanedHashes > 0 || cleanedPeripherals > 0 {
+            print("Cleanup: removed \(cleanedTimestamps) timestamps, \(cleanedHashes) hashes, \(cleanedPeripherals) peripherals")
+        }
+    }
+
+    /// Start periodic cleanup timer (called from setup)
+    private func startCleanupTimer() {
+        // Run cleanup every 5 minutes
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            self?.cleanupStalePeripherals()
+        }
+    }
+
     // MARK: - Cleanup
-    
+
     func stopAll() {
         stopScanning()
         stopBroadcasting()
-        
+
+        // Cancel all delayed disconnects
+        for (_, workItem) in disconnectTimers {
+            workItem.cancel()
+        }
+        disconnectTimers.removeAll()
+
+        // Clear pending connections
+        pendingConnections.removeAll()
+
         for peripheral in connectedPeripherals {
             centralManager?.cancelPeripheralConnection(peripheral)
         }
@@ -645,7 +787,11 @@ extension BLEManager: CBCentralManagerDelegate {
         let lastTime = lastPacketTimestamps[peripheral.identifier] ?? Date.distantPast
 
         if now.timeIntervalSince(lastTime) > packetDedupeInterval {
-            if !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
+            // Skip if already connected, connecting, or in pending queue
+            let alreadyConnected = connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier })
+            let alreadyPending = pendingConnections.contains(where: { $0.identifier == peripheral.identifier })
+
+            if !alreadyConnected && !alreadyPending && peripheral.state != .connecting {
                 // Store peripheral reference to prevent deallocation
                 if !discoveredPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
                     discoveredPeripherals.append(peripheral)
@@ -653,8 +799,12 @@ extension BLEManager: CBCentralManagerDelegate {
 
                 lastPacketTimestamps[peripheral.identifier] = now
 
-                print("Discovered SOS beacon, connecting to read packet...")
-                central.connect(peripheral, options: nil)
+                // Add to connection queue instead of connecting directly
+                pendingConnections.append(peripheral)
+                print("SOS beacon discovered, added to connection queue (queued: \(pendingConnections.count))")
+
+                // Process the queue
+                processConnectionQueue()
             }
         }
     }
@@ -671,7 +821,11 @@ extension BLEManager: CBCentralManagerDelegate {
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         connectedPeripherals.removeAll { $0.identifier == peripheral.identifier }
+        disconnectTimers.removeValue(forKey: peripheral.identifier)
         sendEvent(type: "connectedDevicesChanged", data: connectedPeripherals.count)
+
+        // Process pending connections now that a slot is available
+        processConnectionQueue()
     }
     
     // State restoration
@@ -704,8 +858,13 @@ extension BLEManager: CBPeripheralDelegate {
     
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard let characteristics = service.characteristics else { return }
-        
+
         for characteristic in characteristics where characteristic.uuid == BLEManager.characteristicUUID {
+            // Subscribe to notifications for push updates
+            if characteristic.properties.contains(.notify) {
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+            // Also read value immediately
             peripheral.readValue(for: characteristic)
         }
     }
@@ -720,8 +879,26 @@ extension BLEManager: CBPeripheralDelegate {
         // Show native notification for SOS alert
         showSOSNotification(packetData: data)
 
-        // Disconnect after reading
-        centralManager?.cancelPeripheralConnection(peripheral)
+        // Cache connection instead of immediate disconnect
+        // Reset any existing delayed disconnect timer (new data received)
+        cancelDelayedDisconnect(for: peripheral)
+
+        // Schedule delayed disconnect to keep connection open for push updates
+        // Keeps connection alive for 30 seconds before disconnecting
+        scheduleDelayedDisconnect(for: peripheral, after: 30)
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            print("Failed to enable notifications: \(error.localizedDescription)")
+            return
+        }
+
+        if characteristic.isNotifying {
+            print("Notifications enabled for characteristic on peripheral: \(peripheral.identifier)")
+        } else {
+            print("Notifications disabled for characteristic on peripheral: \(peripheral.identifier)")
+        }
     }
 }
 

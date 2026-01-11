@@ -83,8 +83,8 @@ class BLEService {
   // Verification tracking - which devices have confirmed each SOS
   final Map<int, Set<int>> _verificationMap = {};
 
-  // Seen packet IDs to prevent rebroadcast loops
-  final Set<String> _seenPacketIds = {};
+  // Seen packet IDs with timestamps to prevent rebroadcast loops (time-based eviction)
+  final Map<String, DateTime> _seenPacketCache = {};
 
   // Broadcast priority tracking
   int _broadcastTick = 0;
@@ -278,20 +278,43 @@ class BLEService {
   }
 
   void _cleanupSeenPackets() {
-    // Keep only recent packet IDs to prevent memory bloat
-    if (_seenPacketIds.length > 1000) {
-      final toRemove = _seenPacketIds
-          .take(_seenPacketIds.length - 500)
-          .toList();
-      for (final id in toRemove) {
-        _seenPacketIds.remove(id);
+    // Time-based eviction: Remove packets older than 24 hours (matching packet TTL)
+    final now = DateTime.now();
+    final keysToRemove = <String>[];
+
+    for (final entry in _seenPacketCache.entries) {
+      if (now.difference(entry.value).inHours >= 24) {
+        keysToRemove.add(entry.key);
       }
+    }
+
+    for (final key in keysToRemove) {
+      _seenPacketCache.remove(key);
+    }
+
+    if (keysToRemove.isNotEmpty) {
+      debugPrint('Cleaned up ${keysToRemove.length} expired packet IDs from cache');
     }
   }
 
   Future<void> _loadUserData() async {
     _userId = await _packetStore.getUserId();
     _sequence = await _packetStore.getSequence();
+
+    // Sync userId to native layer for self-notification filtering
+    await _syncUserIdToNative();
+  }
+
+  /// Sync current user ID to native iOS layer for filtering own packets from notifications
+  Future<void> _syncUserIdToNative() async {
+    if (_userId == null) return;
+
+    try {
+      await _channel.invokeMethod('setCurrentUserId', {'userId': _userId});
+      debugPrint('BLEService: Synced userId to native: ${_userId!.toRadixString(16).toUpperCase()}');
+    } catch (e) {
+      debugPrint('BLEService: Failed to sync userId to native: $e');
+    }
   }
 
   /// Handle events from native BLE implementation
@@ -372,15 +395,15 @@ class BLEService {
         return;
       }
 
-      // Check if we've already seen this exact packet
-      if (_seenPacketIds.contains(packetId)) {
+      // Check if we've already seen this exact packet (time-based cache)
+      if (_seenPacketCache.containsKey(packetId)) {
         // Still count as verification if from different source
         if (_userId != null) {
           _addVerification(packet.userId, _userId!);
         }
         return;
       }
-      _seenPacketIds.add(packetId);
+      _seenPacketCache[packetId] = DateTime.now();
 
       // Try to save (handles deduplication)
       final isNew = await _packetStore.savePacket(packet);
@@ -650,21 +673,23 @@ class BLEService {
   void _startBroadcastLoop({bool useExtended = false}) {
     _broadcastTimer?.cancel();
     _broadcastTick = 0;
+    _queueIndex = 0; // Reset queue index on start
 
-    // Broadcast every 1500ms, cycling through queue
+    // Broadcast every 1000ms (reduced from 1500ms for faster mesh propagation)
     // 300ms was too fast for some iOS radio stacks, causing freezes/crashes
-    _broadcastTimer = Timer.periodic(const Duration(milliseconds: 1500), (
+    _broadcastTimer = Timer.periodic(const Duration(milliseconds: 1000), (
       timer,
     ) async {
       _broadcastTick++;
 
       SOSPacket? packetToBroadcast;
 
-      // PRIORITY RULE 1: Broadcast own SOS 50% of the time (every even tick)
-      if (_broadcastTick % 2 == 0 && _currentBroadcast != null) {
+      // PRIORITY RULE: Broadcast own SOS 33% of the time (every 3rd tick)
+      // This allows more time for relaying other packets
+      if (_broadcastTick % 3 == 0 && _currentBroadcast != null) {
         packetToBroadcast = _currentBroadcast;
       } else {
-        // Broadcast relayed packets in other slots
+        // Broadcast relayed packets in other slots (2/3 of the time)
         if (_broadcastQueue.isNotEmpty) {
           // Queue filter: Don't relay own packet again here
           final relayCandidates = _broadcastQueue
@@ -672,10 +697,13 @@ class BLEService {
               .toList();
 
           if (relayCandidates.isNotEmpty) {
-            _queueIndex = (_queueIndex + 1) % relayCandidates.length;
+            // Ensure index is within bounds before using
+            _queueIndex = _queueIndex % relayCandidates.length;
             packetToBroadcast = relayCandidates[_queueIndex];
+            // Increment after use for next iteration
+            _queueIndex = (_queueIndex + 1) % relayCandidates.length;
           } else if (_currentBroadcast != null) {
-            // Fallback to own packet if queue empty
+            // Fallback to own packet if no relay candidates
             packetToBroadcast = _currentBroadcast;
           }
         } else if (_currentBroadcast != null) {
@@ -685,8 +713,8 @@ class BLEService {
 
       if (packetToBroadcast == null) return;
 
-      // ANTI-JAMMING: Random delay before rebroadcast (0-500ms)
-      await Future.delayed(Duration(milliseconds: Random().nextInt(500)));
+      // ANTI-JAMMING: Random delay before rebroadcast (0-300ms, reduced from 500ms)
+      await Future.delayed(Duration(milliseconds: Random().nextInt(300)));
 
       // Broadcast
       try {
@@ -696,6 +724,36 @@ class BLEService {
         });
       } catch (_) {}
     });
+  }
+
+  /// Update broadcast location without resetting the mesh
+  /// This prevents sequence number inflation and verification fragmentation
+  Future<void> updateBroadcastLocation({
+    required double latitude,
+    required double longitude,
+  }) async {
+    if (_currentBroadcast == null || _userId == null) return;
+
+    // Update packet with new location but keep same sequence
+    _currentBroadcast = SOSPacket(
+      userId: _currentBroadcast!.userId,
+      sequence: _currentBroadcast!.sequence,
+      latitudeE7: (latitude * 10000000).round(),
+      longitudeE7: (longitude * 10000000).round(),
+      status: _currentBroadcast!.status,
+      timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      targetId: _currentBroadcast!.targetId,
+    );
+
+    // Update in broadcast queue
+    final idx = _broadcastQueue.indexWhere((p) => p.userId == _userId);
+    if (idx >= 0) {
+      _broadcastQueue[idx] = _currentBroadcast!;
+    }
+
+    debugPrint(
+      'Updated broadcast location: ($latitude, $longitude) - sequence unchanged: ${_currentBroadcast!.sequence}',
+    );
   }
 
   /// Stop broadcasting and send SAFE packet

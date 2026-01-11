@@ -269,6 +269,16 @@ import UserNotifications
             BLEManager.shared.testNotification()
             result(true)
 
+        case "setCurrentUserId":
+            // Set current user ID for filtering own packets from notifications
+            guard let args = call.arguments as? [String: Any],
+                  let userId = args["userId"] as? Int else {
+                result(FlutterError(code: "INVALID_ARGS", message: "Missing userId parameter", details: nil))
+                return
+            }
+            BLEManager.shared.setCurrentUserId(UInt32(userId))
+            result(true)
+
         default:
             result(FlutterMethodNotImplemented)
         }

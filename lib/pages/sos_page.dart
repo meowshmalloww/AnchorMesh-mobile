@@ -238,12 +238,12 @@ class _SOSPageState extends State<SOSPage>
               _longitude = position.longitude;
             });
 
-            // Update broadcast packet if active
+            // Update broadcast location WITHOUT resetting mesh
+            // This prevents sequence number inflation and verification fragmentation
             if (_isBroadcasting) {
-              _bleService.startMeshMode(
+              _bleService.updateBroadcastLocation(
                 latitude: position.latitude,
                 longitude: position.longitude,
-                status: _selectedStatus,
               );
             }
           }
