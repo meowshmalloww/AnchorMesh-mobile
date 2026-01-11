@@ -22,9 +22,11 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "startBroadcasting" -> {
                         val packetBytes = call.argument<List<Int>>("packet")
+                        val advertisingMode = call.argument<String>("advertisingMode") ?: "balanced"
+                        val txPower = call.argument<String>("txPower") ?: "high"
                         if (packetBytes != null) {
                             val byteArray = packetBytes.map { it.toByte() }.toByteArray()
-                            result.success(bleManager.startBroadcasting(byteArray))
+                            result.success(bleManager.startBroadcasting(byteArray, advertisingMode, txPower))
                         } else {
                             result.error("INVALID_ARGS", "Missing packet data", null)
                         }
@@ -33,7 +35,9 @@ class MainActivity : FlutterActivity() {
                         result.success(bleManager.stopBroadcasting())
                     }
                     "startScanning" -> {
-                        result.success(bleManager.startScanning())
+                        val scanMode = call.argument<String>("scanMode") ?: "balanced"
+                        val useScanFilters = call.argument<Boolean>("useScanFilters") ?: true
+                        result.success(bleManager.startScanning(scanMode, useScanFilters))
                     }
                     "stopScanning" -> {
                         result.success(bleManager.stopScanning())
@@ -47,8 +51,21 @@ class MainActivity : FlutterActivity() {
                     "getDeviceUuid" -> {
                         result.success(bleManager.getDeviceUuid())
                     }
+                    "getBluetoothState" -> {
+                        result.success(bleManager.getBluetoothState())
+                    }
+                    "requestBluetoothEnable" -> {
+                        result.success(bleManager.requestBluetoothEnable(this))
+                    }
+                    "requestIgnoreBatteryOptimizations" -> {
+                        result.success(bleManager.requestBatteryOptimizationExemption())
+                    }
                     "requestBatteryExemption" -> {
                         result.success(bleManager.requestBatteryOptimizationExemption())
+                    }
+                    "setAdvertisingMode" -> {
+                        val mode = call.argument<String>("mode") ?: "balanced"
+                        result.success(bleManager.setAdvertisingMode(mode))
                     }
                     "supportsBle5" -> {
                         result.success(bleManager.supportsBle5())

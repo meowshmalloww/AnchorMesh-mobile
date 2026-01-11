@@ -26,7 +26,12 @@ class BootReceiver : BroadcastReceiver() {
                 // Start foreground service for continuous operation
                 val serviceIntent = Intent(ctx, MeshForegroundService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    ctx.startForegroundService(serviceIntent)
+                    try {
+                        ctx.startForegroundService(serviceIntent)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start foreground service from boot: ${e.message}")
+                        // Fallback: WorkManager (already scheduled above) will handle it eventually
+                    }
                 } else {
                     ctx.startService(serviceIntent)
                 }

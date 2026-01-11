@@ -76,6 +76,11 @@ class BLEManager(private val context: Context) {
     private val connectedDevices = mutableSetOf<BluetoothDevice>()
     private val discoveredDevices = mutableSetOf<String>()
     private val relayedPacketIds = mutableSetOf<String>()
+    
+    // Native-level deduplication to prevent looping
+    // Key: "userId-sequence", Value: timestamp when first seen
+    private val seenPackets = mutableMapOf<String, Long>()
+    private val PACKET_SEEN_EXPIRY_MS = 30000L // 30 seconds
 
     // Flutter event sink
     private var eventSink: EventChannel.EventSink? = null
@@ -135,15 +140,15 @@ class BLEManager(private val context: Context) {
             return
         }
 
-        // Extract lat/lon (bytes 8-15, stored as int * 10^7)
-        val latE7 = ((packetData[8].toInt() and 0xFF) or
-                    ((packetData[9].toInt() and 0xFF) shl 8) or
-                    ((packetData[10].toInt() and 0xFF) shl 16) or
-                    ((packetData[11].toInt() and 0xFF) shl 24))
-        val lonE7 = ((packetData[12].toInt() and 0xFF) or
-                    ((packetData[13].toInt() and 0xFF) shl 8) or
-                    ((packetData[14].toInt() and 0xFF) shl 16) or
-                    ((packetData[15].toInt() and 0xFF) shl 24))
+        // Extract lat/lon (bytes 8-15, stored as int * 10^7, BIG ENDIAN - matches Flutter encoding)
+        val latE7 = ((packetData[8].toInt() and 0xFF) shl 24) or
+                    ((packetData[9].toInt() and 0xFF) shl 16) or
+                    ((packetData[10].toInt() and 0xFF) shl 8) or
+                    (packetData[11].toInt() and 0xFF)
+        val lonE7 = ((packetData[12].toInt() and 0xFF) shl 24) or
+                    ((packetData[13].toInt() and 0xFF) shl 16) or
+                    ((packetData[14].toInt() and 0xFF) shl 8) or
+                    (packetData[15].toInt() and 0xFF)
 
         val lat = latE7 / 10000000.0
         val lon = lonE7 / 10000000.0
@@ -287,7 +292,11 @@ class BLEManager(private val context: Context) {
         }
     } else null
 
-    fun startBroadcasting(packetData: ByteArray): Boolean {
+    fun startBroadcasting(
+        packetData: ByteArray,
+        advertisingMode: String = "balanced",
+        txPower: String = "high"
+    ): Boolean {
         if (!checkBluetoothPermissions()) {
             sendEvent("error", "Bluetooth permissions not granted")
             return false
@@ -322,7 +331,7 @@ class BLEManager(private val context: Context) {
 
         // DUAL-MODE BROADCASTING: Run BOTH legacy and extended for cross-version compatibility
         // 1. Always start Legacy Advertising first (works with BLE 4.x AND 5.x devices)
-        val legacyStarted = startLegacyAdvertising()
+        val legacyStarted = startLegacyAdvertising(advertisingMode, txPower)
         
         // 2. Additionally start Extended Advertising if supported (for long range)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && supportsBle5()) {
@@ -342,7 +351,7 @@ class BLEManager(private val context: Context) {
                     .addServiceUuid(ParcelUuid(SERVICE_UUID))
                     .build()
 
-                advertiser.startAdvertisingSet(
+                bluetoothLeAdvertiser?.startAdvertisingSet(
                     parameters,
                     data,
                     null, // Scan response
@@ -361,12 +370,33 @@ class BLEManager(private val context: Context) {
         return legacyStarted
     }
 
-    private fun startLegacyAdvertising(): Boolean {
+    // Store current advertising mode for dynamic updates
+    private var currentAdvertisingMode = "balanced"
+    private var currentTxPower = "high"
+
+    private fun startLegacyAdvertising(advertisingMode: String = "balanced", txPower: String = "high"): Boolean {
         val advertiser = bluetoothLeAdvertiser ?: return false
         
+        currentAdvertisingMode = advertisingMode
+        currentTxPower = txPower
+        
+        // FIX #2: Dynamic advertising mode based on app state
+        val advertiseMode = when (advertisingMode) {
+            "lowLatency" -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+            "lowPower" -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+            else -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
+        }
+        
+        val txPowerLevel = when (txPower) {
+            "ultraLow" -> AdvertiseSettings.ADVERTISE_TX_POWER_ULTRA_LOW
+            "low" -> AdvertiseSettings.ADVERTISE_TX_POWER_LOW
+            "medium" -> AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM
+            else -> AdvertiseSettings.ADVERTISE_TX_POWER_HIGH // FIX #2: Force HIGH for signal penetration
+        }
+        
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setAdvertiseMode(advertiseMode)
+            .setTxPowerLevel(txPowerLevel)
             .setConnectable(true)
             .setTimeout(0) // Advertise indefinitely
             .build()
@@ -490,7 +520,7 @@ class BLEManager(private val context: Context) {
     // Scanning (Observer)
     // =====================
 
-    fun startScanning(): Boolean {
+    fun startScanning(scanMode: String = "balanced", useScanFilters: Boolean = true): Boolean {
         if (!checkBluetoothPermissions()) {
             sendEvent("error", "Bluetooth permissions not granted")
             return false
@@ -502,9 +532,16 @@ class BLEManager(private val context: Context) {
             return false
         }
 
-        // Configure scan settings
+        // FIX #2: Configure scan settings based on mode
+        val scanModeValue = when (scanMode) {
+            "lowLatency" -> ScanSettings.SCAN_MODE_LOW_LATENCY
+            "lowPower" -> ScanSettings.SCAN_MODE_LOW_POWER
+            "opportunistic" -> ScanSettings.SCAN_MODE_OPPORTUNISTIC
+            else -> ScanSettings.SCAN_MODE_BALANCED
+        }
+        
         val settingsBuilder = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
+            .setScanMode(scanModeValue)
             
         // Enable Extended Advertising / Coded PHY support if available
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && supportsBle5()) {
@@ -515,17 +552,22 @@ class BLEManager(private val context: Context) {
 
         val settings = settingsBuilder.build()
 
-        val filters = listOf(
-            ScanFilter.Builder()
-                .setServiceUuid(ParcelUuid(SERVICE_UUID))
-                .build()
-        )
+        // FIX #2: Always use scan filters on Android for background visibility
+        val filters = if (useScanFilters) {
+            listOf(
+                ScanFilter.Builder()
+                    .setServiceUuid(ParcelUuid(SERVICE_UUID))
+                    .build()
+            )
+        } else {
+            null
+        }
 
         try {
             scanner.startScan(filters, settings, scanCallback)
             isScanning = true
             updateCurrentState()
-            Log.d(TAG, "Started scanning")
+            Log.d(TAG, "Started scanning with mode: $scanMode, filters: $useScanFilters")
             return true
         } catch (e: Exception) {
             sendEvent("error", "Failed to start scanning: ${e.message}")
@@ -654,7 +696,10 @@ class BLEManager(private val context: Context) {
 
     // Map to track last connection time for throttling (Address -> Timestamp)
     private val deviceConnectionTimestamps = mutableMapOf<String, Long>()
-    private val CONNECTION_THROTTLE_MS = 5000L // Read every 5 seconds
+    private val CONNECTION_THROTTLE_MS = 10000L // Read every 10 seconds (was 5s - reduced to prevent spam)
+    
+    // Active GATT connections for proper cleanup
+    private val activeGattConnections = mutableMapOf<String, BluetoothGatt>()
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
@@ -682,12 +727,27 @@ class BLEManager(private val context: Context) {
 
     private fun connectToDevice(device: BluetoothDevice) {
         if (!checkBluetoothPermissions()) return
+        
+        val address = device.address
+        
+        // Close any existing connection to this device first
+        activeGattConnections[address]?.let { existingGatt ->
+            try {
+                existingGatt.disconnect()
+                existingGatt.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing existing GATT: ${e.message}")
+            }
+            activeGattConnections.remove(address)
+        }
 
         device.connectGatt(context, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    gatt?.let { activeGattConnections[address] = it }
                     gatt?.requestMtu(TARGET_MTU)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    activeGattConnections.remove(address)
                     gatt?.close()
                 }
             }
@@ -704,7 +764,12 @@ class BLEManager(private val context: Context) {
                     val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
                     if (characteristic != null) {
                         gatt.readCharacteristic(characteristic)
+                    } else {
+                        // No characteristic, disconnect
+                        gatt?.disconnect()
                     }
+                } else {
+                    gatt?.disconnect()
                 }
             }
 
@@ -715,19 +780,97 @@ class BLEManager(private val context: Context) {
             ) {
                 if (status == BluetoothGatt.GATT_SUCCESS && characteristic?.uuid == CHARACTERISTIC_UUID) {
                     characteristic.value?.let { data ->
-                        sendEvent("packetReceived", data.toList())
-                        // Show native notification for SOS alert
-                        showSOSNotification(data)
+                        // Native-level deduplication to prevent looping
+                        val packetId = extractPacketId(data)
+                        val currentTime = System.currentTimeMillis()
+                        val lastSeen = seenPackets[packetId] ?: 0L
+                        
+                        // Clean up old entries periodically
+                        if (seenPackets.size > 100) {
+                            val expiredTime = currentTime - PACKET_SEEN_EXPIRY_MS
+                            seenPackets.entries.removeIf { it.value < expiredTime }
+                        }
+                        
+                        if (currentTime - lastSeen > PACKET_SEEN_EXPIRY_MS) {
+                            // New packet or expired - process it
+                            seenPackets[packetId] = currentTime
+                            sendEvent("packetReceived", data.toList())
+                            // Show native notification for SOS alert
+                            showSOSNotification(data)
+                            Log.d(TAG, "Received NEW packet: $packetId from ${gatt?.device?.address}")
+                        } else {
+                            Log.d(TAG, "Ignoring duplicate packet: $packetId (seen ${(currentTime - lastSeen)/1000}s ago)")
+                        }
                     }
                 }
+                // Always disconnect after reading
                 gatt?.disconnect()
             }
         })
+    }
+    
+    // Extract packet ID (userId-sequence) for deduplication
+    private fun extractPacketId(data: ByteArray): String {
+        if (data.size < 8) return "unknown"
+        
+        // Read userId (bytes 2-5, Big Endian)
+        val userId = ((data[2].toInt() and 0xFF) shl 24) or
+                     ((data[3].toInt() and 0xFF) shl 16) or
+                     ((data[4].toInt() and 0xFF) shl 8) or
+                     (data[5].toInt() and 0xFF)
+        
+        // Read sequence (bytes 6-7, Big Endian)
+        val sequence = ((data[6].toInt() and 0xFF) shl 8) or
+                       (data[7].toInt() and 0xFF)
+        
+        return "$userId-$sequence"
     }
 
     // =====================
     // Utility Methods
     // =====================
+
+    // FIX #3: Get current Bluetooth state
+    fun getBluetoothState(): String {
+        return when (bluetoothAdapter?.state) {
+            BluetoothAdapter.STATE_ON -> "on"
+            BluetoothAdapter.STATE_OFF -> "off"
+            BluetoothAdapter.STATE_TURNING_ON -> "turningOn"
+            BluetoothAdapter.STATE_TURNING_OFF -> "turningOff"
+            else -> "unknown"
+        }
+    }
+
+    // FIX #3: Request Bluetooth enable
+    @Suppress("DEPRECATION")
+    fun requestBluetoothEnable(activity: android.app.Activity): Boolean {
+        if (bluetoothAdapter?.isEnabled == true) {
+            return true
+        }
+        
+        return try {
+            // Request Bluetooth enable via system intent
+            val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+            activity.startActivityForResult(enableBtIntent, 1001)
+            // Note: This is async, actual result comes via onActivityResult
+            true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Cannot request Bluetooth enable: ${e.message}")
+            false
+        }
+    }
+
+    // FIX #2: Dynamically update advertising mode
+    fun setAdvertisingMode(mode: String): Boolean {
+        if (!isAdvertising) {
+            return false // Can only change mode while advertising
+        }
+        
+        // For dynamic mode changes, we need to stop and restart advertising
+        val packetData = currentPacketData ?: return false
+        stopBroadcasting()
+        return startBroadcasting(packetData, mode, currentTxPower)
+    }
 
     fun checkInternet(): Boolean {
         return try {
@@ -830,29 +973,29 @@ class BLEManager(private val context: Context) {
         testPacket[6] = 0x01
         testPacket[7] = 0x00
 
-        // Latitude: 37.7749 * 10^7 = 377749000 (San Francisco)
+        // Latitude: 37.7749 * 10^7 = 377749000 (San Francisco) - BIG ENDIAN
         val lat = 377749000
-        testPacket[8] = (lat and 0xFF).toByte()
-        testPacket[9] = ((lat shr 8) and 0xFF).toByte()
-        testPacket[10] = ((lat shr 16) and 0xFF).toByte()
-        testPacket[11] = ((lat shr 24) and 0xFF).toByte()
+        testPacket[8] = ((lat shr 24) and 0xFF).toByte()
+        testPacket[9] = ((lat shr 16) and 0xFF).toByte()
+        testPacket[10] = ((lat shr 8) and 0xFF).toByte()
+        testPacket[11] = (lat and 0xFF).toByte()
 
-        // Longitude: -122.4194 * 10^7 = -1224194000
+        // Longitude: -122.4194 * 10^7 = -1224194000 - BIG ENDIAN
         val lon = -1224194000
-        testPacket[12] = (lon and 0xFF).toByte()
-        testPacket[13] = ((lon shr 8) and 0xFF).toByte()
-        testPacket[14] = ((lon shr 16) and 0xFF).toByte()
-        testPacket[15] = ((lon shr 24) and 0xFF).toByte()
+        testPacket[12] = ((lon shr 24) and 0xFF).toByte()
+        testPacket[13] = ((lon shr 16) and 0xFF).toByte()
+        testPacket[14] = ((lon shr 8) and 0xFF).toByte()
+        testPacket[15] = (lon and 0xFF).toByte()
 
         // Status: SOS (0x01)
         testPacket[16] = STATUS_SOS.toByte()
 
-        // Timestamp: current time
+        // Timestamp: current time - BIG ENDIAN
         val timestamp = (System.currentTimeMillis() / 1000).toInt()
-        testPacket[17] = (timestamp and 0xFF).toByte()
-        testPacket[18] = ((timestamp shr 8) and 0xFF).toByte()
-        testPacket[19] = ((timestamp shr 16) and 0xFF).toByte()
-        testPacket[20] = ((timestamp shr 24) and 0xFF).toByte()
+        testPacket[17] = ((timestamp shr 24) and 0xFF).toByte()
+        testPacket[18] = ((timestamp shr 16) and 0xFF).toByte()
+        testPacket[19] = ((timestamp shr 8) and 0xFF).toByte()
+        testPacket[20] = (timestamp and 0xFF).toByte()
 
         // Target ID: 0 (broadcast)
         testPacket[21] = 0x00

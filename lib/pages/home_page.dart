@@ -37,6 +37,7 @@ class _HomePageState extends State<HomePage>
 
   StreamSubscription? _alertSub;
   StreamSubscription? _bleSub;
+  StreamSubscription? _packetSub; // New packet listener
   StreamSubscription? _connectSub;
   StreamSubscription? _powerModeSub;
   bool _isLowPowerMode = false;
@@ -60,9 +61,12 @@ class _HomePageState extends State<HomePage>
     _connectSub = _connectivityChecker.statusStream.listen((online) {
       if (mounted) setState(() => _isOnline = online);
     });
-    _connectSub = _connectivityChecker.statusStream.listen((online) {
-      if (mounted) setState(() => _isOnline = online);
+
+    // START FIX: Listen for incoming SOS packets to update count
+    _packetSub = _bleService.onPacketReceived.listen((_) {
+      _loadData(); // Reload active packet count
     });
+    // END FIX
 
     // Listen for Battery Saver Mode
     _powerModeSub = PlatformService.instance.lowPowerModeStream.listen((
@@ -99,6 +103,7 @@ class _HomePageState extends State<HomePage>
   void dispose() {
     _alertSub?.cancel();
     _bleSub?.cancel();
+    _packetSub?.cancel(); // Cancel packet listener
     _connectSub?.cancel();
     _powerModeSub?.cancel();
     super.dispose();
@@ -304,7 +309,9 @@ class _HomePageState extends State<HomePage>
                 icon: Icons.sensors,
                 label: 'Active',
                 value: '$_activeSosCount SOS',
-                color: _activeSosCount > 0 ? colors.accent : colors.textSecondary,
+                color: _activeSosCount > 0
+                    ? colors.accent
+                    : colors.textSecondary,
                 colors: colors,
               ),
             ),

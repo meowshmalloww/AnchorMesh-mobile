@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
@@ -13,7 +14,22 @@ import 'connectivity_service.dart';
 // Re-export for backward compatibility
 export '../models/ble_models.dart';
 
+/// iOS Overflow Area Hash Constants
+/// When iOS is in background, it hashes Service UUIDs into a 128-bit bitmask
+/// in Manufacturer Data (Company ID 0x004C, Apple).
+/// The hash is: MD5(UUID)[0..15] XOR'd into the overflow bits.
+const int kAppleManufacturerId = 0x004C;
+
+/// Our Service UUID for SOS Mesh
+/// Using a custom 128-bit UUID for uniqueness
+const String kServiceUUID = '12345678-1234-1234-1234-123456789ABC';
+
 /// BLE Service for cross-platform mesh networking
+///
+/// Fixes for 3 Critical Issues:
+/// 1. iOS Background Overflow - Scans for hashed UUID in manufacturer data
+/// 2. Android Invisible Broadcaster - Uses scan filters + proper advertising modes
+/// 3. Silent Start - Forces Bluetooth ON + requests battery optimization exemption
 class BLEService {
   static const _channel = MethodChannel('com.project_flutter/ble');
   static const _eventChannel = EventChannel('com.project_flutter/ble_events');
@@ -46,6 +62,7 @@ class BLEService {
   final _handshakeController = StreamController<int>.broadcast();
   final _rawDeviceController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _bluetoothStateController = StreamController<bool>.broadcast();
 
   // Services
   final PacketStore _packetStore = PacketStore.instance;
@@ -64,6 +81,9 @@ class BLEService {
   SOSPacket? _currentBroadcast;
   Timer? _broadcastTimer;
   Timer? _cleanupTimer;
+  bool _isBluetoothOn = false;
+  bool _batteryOptimizationRequested = false;
+  bool _isInForeground = true;
 
   // User data
   int? _userId;
@@ -113,6 +133,9 @@ class BLEService {
   Stream<Map<String, dynamic>> get onRawDeviceFound =>
       _rawDeviceController.stream;
 
+  /// Stream of Bluetooth state changes
+  Stream<bool> get onBluetoothStateChanged => _bluetoothStateController.stream;
+
   /// Current connection state
   BLEConnectionState get state => _state;
 
@@ -138,8 +161,15 @@ class BLEService {
   int _eventChannelRetryCount = 0;
   static const int _maxEventChannelRetries = 5;
 
-  /// Initialize the BLE service
-  void _init() {
+  /// Whether Bluetooth is currently on
+  bool get isBluetoothOn => _isBluetoothOn;
+
+  // ==========================================================================
+  // INITIALIZATION - FIX #3: SILENT START BUG
+  // ==========================================================================
+
+  /// Initialize the BLE service with proper Bluetooth checks
+  Future<void> _init() async {
     // Cancel existing subscription if any (handles reinit)
     _eventChannelSubscription?.cancel();
     _eventChannelRetryCount = 0;
@@ -158,10 +188,66 @@ class BLEService {
     });
 
     // Load user data
-    _loadUserData();
+    await _loadUserData();
 
     // Initialize notifications
-    _initNotifications();
+    await _initNotifications();
+
+    // === FIX #3: SILENT START ===
+    // 1. Check Bluetooth state
+    await _checkAndEnableBluetooth();
+
+    // 2. Request Battery Optimization Exemption (Android)
+    if (Platform.isAndroid && !_batteryOptimizationRequested) {
+      await _requestBatteryOptimizationExemption();
+      _batteryOptimizationRequested = true;
+    }
+  }
+
+  /// Check Bluetooth state and prompt user to enable if off
+  Future<bool> _checkAndEnableBluetooth() async {
+    try {
+      // Check current state
+      final state = await _channel.invokeMethod<String>('getBluetoothState');
+      _isBluetoothOn = state == 'poweredOn' || state == 'on';
+      _bluetoothStateController.add(_isBluetoothOn);
+
+      if (!_isBluetoothOn) {
+        // Prompt user to enable Bluetooth
+        debugPrint('Bluetooth is OFF - requesting enable');
+        final enabled = await _channel.invokeMethod<bool>(
+          'requestBluetoothEnable',
+        );
+        _isBluetoothOn = enabled ?? false;
+        _bluetoothStateController.add(_isBluetoothOn);
+
+        if (!_isBluetoothOn) {
+          _errorController.add('Bluetooth must be enabled for mesh networking');
+        }
+      }
+      return _isBluetoothOn;
+    } on PlatformException catch (e) {
+      _errorController.add('Failed to check Bluetooth: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Request Android battery optimization exemption
+  Future<bool> _requestBatteryOptimizationExemption() async {
+    if (!Platform.isAndroid) return true;
+
+    try {
+      final result = await _channel.invokeMethod<bool>(
+        'requestIgnoreBatteryOptimizations',
+      );
+      debugPrint(
+        'Battery optimization exemption: ${result == true ? "granted" : "denied"}',
+      );
+      return result ?? false;
+    } on PlatformException catch (e) {
+      debugPrint('Battery optimization request failed: ${e.message}');
+      return false;
+    }
   }
 
   /// Subscribe to native BLE event channel with retry logic
@@ -194,13 +280,17 @@ class BLEService {
       if (_eventChannelRetryCount < _maxEventChannelRetries) {
         _eventChannelRetryCount++;
         final delay = Duration(seconds: _eventChannelRetryCount);
-        debugPrint('Retrying event channel subscription in ${delay.inSeconds}s (attempt $_eventChannelRetryCount)');
+        debugPrint(
+          'Retrying event channel subscription in ${delay.inSeconds}s (attempt $_eventChannelRetryCount)',
+        );
         Future.delayed(delay, () {
           _subscribeToEventChannel();
         });
       } else {
         debugPrint('Max retry attempts reached for BLE event channel');
-        _errorController.add('BLE event channel initialization failed after $_maxEventChannelRetries attempts');
+        _errorController.add(
+          'BLE event channel initialization failed after $_maxEventChannelRetries attempts',
+        );
       }
     }
   }
@@ -214,6 +304,28 @@ class BLEService {
 
     // Use the same subscription logic with retry
     _subscribeToEventChannel();
+  }
+
+  /// Notify service of app lifecycle changes (for advertising mode switching)
+  void setForegroundState(bool isInForeground) {
+    _isInForeground = isInForeground;
+    debugPrint('App foreground state: $_isInForeground');
+
+    // If actively broadcasting, update advertising mode
+    if (_currentBroadcast != null) {
+      _updateAdvertisingMode();
+    }
+  }
+
+  /// Update advertising mode based on foreground state
+  Future<void> _updateAdvertisingMode() async {
+    try {
+      await _channel.invokeMethod<void>('setAdvertisingMode', {
+        'mode': _isInForeground ? 'lowLatency' : 'balanced',
+      });
+    } catch (e) {
+      debugPrint('Failed to update advertising mode: $e');
+    }
   }
 
   Future<void> _initNotifications() async {
@@ -294,6 +406,10 @@ class BLEService {
     _sequence = await _packetStore.getSequence();
   }
 
+  // ==========================================================================
+  // EVENT HANDLING
+  // ==========================================================================
+
   /// Handle events from native BLE implementation
   void _handleNativeEvent(dynamic event) {
     if (event is! Map) return;
@@ -305,6 +421,15 @@ class BLEService {
       case 'stateChanged':
         if (data is String) {
           _updateState(data);
+        }
+        break;
+      case 'bluetoothStateChanged':
+        if (data is bool) {
+          _isBluetoothOn = data;
+          _bluetoothStateController.add(_isBluetoothOn);
+        } else if (data is String) {
+          _isBluetoothOn = data == 'poweredOn' || data == 'on';
+          _bluetoothStateController.add(_isBluetoothOn);
         }
         break;
       case 'packetReceived':
@@ -336,6 +461,13 @@ class BLEService {
       case 'rawDeviceFound':
         if (data is Map) {
           _rawDeviceController.add(Map<String, dynamic>.from(data));
+        }
+        break;
+      case 'iOSBackgroundOverflow':
+        // iOS detected a device in background overflow mode
+        if (data is Map) {
+          debugPrint('iOS Overflow device detected: ${data['address']}');
+          // The native layer handles connecting to these devices
         }
         break;
     }
@@ -426,7 +558,6 @@ class BLEService {
   void _handleEchoDetected(SOSPacket packet, int rssi) {
     _echoCount++;
     // Track the source (we can't know exactly who, but we know it's not us)
-    // In real implementation, you'd track the BLE address
     _echoSources.add(rssi.hashCode ^ DateTime.now().millisecondsSinceEpoch);
 
     final event = EchoEvent(
@@ -515,7 +646,6 @@ class BLEService {
       }
 
       // Drop oldest forwarded packet (from the front of the list - FIFO)
-      // This ensures newer, more relevant packets are prioritized
       _broadcastQueue.removeAt(0);
     }
 
@@ -532,12 +662,30 @@ class BLEService {
     }
   }
 
+  // ==========================================================================
+  // BROADCASTING - FIX #2: ANDROID INVISIBLE BROADCASTER
+  // ==========================================================================
+
   /// Start broadcasting own SOS
+  /// Start broadcasting own SOS
+  ///
+  /// FIX #2: Uses proper advertising modes based on foreground state
+  /// - Foreground: LOW_LATENCY for fast discovery
+  /// - Background: BALANCED for battery efficiency + visibility
   Future<bool> startBroadcasting({
     required double latitude,
     required double longitude,
     required SOSStatus status,
   }) async {
+    // Ensure Bluetooth is on
+    if (!_isBluetoothOn) {
+      final enabled = await _checkAndEnableBluetooth();
+      if (!enabled) {
+        _errorController.add('Cannot broadcast: Bluetooth is off');
+        return false;
+      }
+    }
+
     if (_userId == null) await _loadUserData();
 
     // Verify user ID was loaded successfully
@@ -566,7 +714,7 @@ class BLEService {
 
     _sequence = await _packetStore.incrementSequence();
 
-    // Reset echo tracking regarding new broadcast
+    // Reset echo tracking for new broadcast
     _echoCount = 0;
     _echoSources.clear();
     _handshakeCount = 0;
@@ -592,7 +740,11 @@ class BLEService {
     try {
       final result = await _channel.invokeMethod<bool>('startBroadcasting', {
         'packet': _currentBroadcast!.toBytes(),
-        'extended': useExtended, // Tell native to use Extended Adv
+        'extended': useExtended,
+        // FIX #2: Pass advertising mode based on app state
+        'advertisingMode': _isInForeground ? 'lowLatency' : 'balanced',
+        'txPower': 'high', // Force high TX power for signal penetration
+        'serviceUuid': kServiceUUID,
       });
       return result ?? false;
     } on PlatformException catch (e) {
@@ -632,13 +784,15 @@ class BLEService {
     _addToQueue(packet);
 
     // Save locally (marked as local origin - will NEVER be synced to cloud)
-    // Only devices that receive this via BLE can relay it to the dashboard
     await _packetStore.saveLocalPacket(packet);
 
     // Trigger immediate broadcast attempt
     try {
       await _channel.invokeMethod<bool>('startBroadcasting', {
         'packet': packet.toBytes(),
+        'advertisingMode': _isInForeground ? 'lowLatency' : 'balanced',
+        'txPower': 'high',
+        'serviceUuid': kServiceUUID,
       });
       return true;
     } catch (_) {
@@ -652,7 +806,6 @@ class BLEService {
     _broadcastTick = 0;
 
     // Broadcast every 1500ms, cycling through queue
-    // 300ms was too fast for some iOS radio stacks, causing freezes/crashes
     _broadcastTimer = Timer.periodic(const Duration(milliseconds: 1500), (
       timer,
     ) async {
@@ -666,7 +819,6 @@ class BLEService {
       } else {
         // Broadcast relayed packets in other slots
         if (_broadcastQueue.isNotEmpty) {
-          // Queue filter: Don't relay own packet again here
           final relayCandidates = _broadcastQueue
               .where((p) => p.userId != _userId)
               .toList();
@@ -675,7 +827,6 @@ class BLEService {
             _queueIndex = (_queueIndex + 1) % relayCandidates.length;
             packetToBroadcast = relayCandidates[_queueIndex];
           } else if (_currentBroadcast != null) {
-            // Fallback to own packet if queue empty
             packetToBroadcast = _currentBroadcast;
           }
         } else if (_currentBroadcast != null) {
@@ -693,6 +844,9 @@ class BLEService {
         await _channel.invokeMethod<bool>('startBroadcasting', {
           'packet': packetToBroadcast.toBytes(),
           'extended': useExtended,
+          'advertisingMode': _isInForeground ? 'lowLatency' : 'balanced',
+          'txPower': 'high',
+          'serviceUuid': kServiceUUID,
         });
       } catch (_) {}
     });
@@ -721,6 +875,7 @@ class BLEService {
         for (int i = 0; i < 5; i++) {
           await _channel.invokeMethod<bool>('startBroadcasting', {
             'packet': safePacket.toBytes(),
+            'serviceUuid': kServiceUUID,
           });
           await Future.delayed(const Duration(milliseconds: 200));
         }
@@ -739,10 +894,37 @@ class BLEService {
     }
   }
 
+  // ==========================================================================
+  // SCANNING - FIX #1: iOS BACKGROUND OVERFLOW & FIX #2: ANDROID SCAN FILTERS
+  // ==========================================================================
+
   /// Start scanning for other SOS beacons
+  ///
+  /// FIX #1: Configures scanner to look for iOS overflow area
+  /// FIX #2: Attaches scan filters for Android visibility
   Future<bool> startScanning() async {
+    // Ensure Bluetooth is on
+    if (!_isBluetoothOn) {
+      final enabled = await _checkAndEnableBluetooth();
+      if (!enabled) {
+        _errorController.add('Cannot scan: Bluetooth is off');
+        return false;
+      }
+    }
+
     try {
-      final result = await _channel.invokeMethod<bool>('startScanning');
+      final result = await _channel.invokeMethod<bool>('startScanning', {
+        // Primary service UUID filter
+        'serviceUuid': kServiceUUID,
+
+        // FIX #1: Enable iOS overflow area scanning
+        'scanForOverflow': true,
+        'appleManufacturerId': kAppleManufacturerId,
+
+        // FIX #2: Android scan filter configuration
+        'useScanFilters': true,
+        'scanMode': _isInForeground ? 'lowLatency' : 'balanced',
+      });
       return result ?? false;
     } on PlatformException catch (e) {
       _errorController.add('Failed to start scanning: ${e.message}');
@@ -817,7 +999,6 @@ class BLEService {
   }
 
   /// Start raw BLE scan (nRF Connect-like, no UUID filtering)
-  /// Returns device info via onRawDeviceFound stream
   Future<bool> startRawScan() async {
     try {
       final result = await _channel.invokeMethod<bool>('startRawScan');
@@ -840,7 +1021,6 @@ class BLEService {
   }
 
   /// Test notification by simulating an SOS packet reception
-  /// This is for testing purposes only - triggers a notification without BLE
   Future<bool> testNotification() async {
     try {
       final result = await _channel.invokeMethod<bool>('testNotification');
@@ -856,7 +1036,6 @@ class BLEService {
     if (_userId == null) {
       await _loadUserData();
     }
-    // _loadUserData always sets _userId, but add fallback for safety
     return _userId ?? await _packetStore.getUserId();
   }
 
@@ -885,5 +1064,7 @@ class BLEService {
     _echoController.close();
     _verificationController.close();
     _handshakeController.close();
+    _bluetoothStateController.close();
+    _rawDeviceController.close();
   }
 }

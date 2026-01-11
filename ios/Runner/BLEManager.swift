@@ -52,11 +52,14 @@ class BLEManager: NSObject {
     private var lastPacketTimestamps: [UUID: Date] = [:]
     private let packetDedupeInterval: TimeInterval = 2.0 // 2 seconds - allows for reliable mesh relay
 
-    // Track recently seen packet hashes to dedupe
+    // Track recently seen packet hashes to dedupe (Android advertisements)
     private var recentPacketHashes: Set<Int> = []
-
-    // Track packet content hashes with timestamps for smarter deduplication
     private var packetHashTimestamps: [Int: Date] = [:]
+
+    // Native-level deduplication to prevent looping (Packet Content)
+    // Key: "userId-sequence", Value: timestamp when first seen
+    private var seenPackets: [String: Date] = [:]
+    private let packetSeenExpiry: TimeInterval = 30.0 // 30 seconds
     
     // MARK: - Singleton
     
@@ -713,15 +716,46 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic.uuid == BLEManager.characteristicUUID,
               let data = characteristic.value else { return }
+        
+        // Native-level deduplication to prevent looping
+        let packetId = extractPacketId(from: data)
+        let now = Date()
+        let lastSeen = seenPackets[packetId] ?? Date.distantPast
+        
+        // Clean up old entries periodically
+        if seenPackets.count > 100 {
+            seenPackets = seenPackets.filter { now.timeIntervalSince($0.value) < packetSeenExpiry }
+        }
+        
+        if now.timeIntervalSince(lastSeen) > packetSeenExpiry {
+            // New packet or expired - process it
+            seenPackets[packetId] = now
+            
+            // Send received packet to Flutter
+            sendEvent(type: "packetReceived", data: Array(data))
 
-        // Send received packet to Flutter
-        sendEvent(type: "packetReceived", data: Array(data))
-
-        // Show native notification for SOS alert
-        showSOSNotification(packetData: data)
+            // Show native notification for SOS alert
+            showSOSNotification(packetData: data)
+            print("Received NEW packet: \(packetId) from \(peripheral.identifier)")
+        } else {
+            print("Ignoring duplicate packet: \(packetId) (seen \(Int(now.timeIntervalSince(lastSeen)))s ago)")
+        }
 
         // Disconnect after reading
         centralManager?.cancelPeripheralConnection(peripheral)
+    }
+    
+    // Extract packet ID (userId-sequence) for deduplication
+    private func extractPacketId(from data: Data) -> String {
+        guard data.count >= 8 else { return "unknown" }
+        
+        // Read userId (bytes 2-5, Big Endian)
+        let userId = (Int(data[2]) << 24) | (Int(data[3]) << 16) | (Int(data[4]) << 8) | Int(data[5])
+        
+        // Read sequence (bytes 6-7, Big Endian)
+        let sequence = (Int(data[6]) << 8) | Int(data[7])
+        
+        return "\(userId)-\(sequence)"
     }
 }
 

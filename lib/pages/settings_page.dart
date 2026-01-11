@@ -176,46 +176,21 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               // Storage Stats
               // Storage Stats (Custom Row for alignment)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+              // Storage Stats
+              ListTile(
+                leading: const Icon(Icons.sd_storage, color: Colors.blue),
+                title: const Text('Map Storage'),
+                subtitle: Text(
+                  _mapStorageSize,
+                  style: TextStyle(color: Colors.grey[600]),
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Icon(Icons.sd_storage, color: Colors.blue),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Map Storage',
-                            style: TextStyle(fontSize: 16),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _mapStorageSize,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.delete_outline,
-                        color: Colors.blueGrey,
-                      ),
-                      onPressed: _clearMapCache,
-                      tooltip: 'Clear Map Cache',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ],
+                trailing: IconButton(
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.blueGrey,
+                  ),
+                  onPressed: _clearMapCache,
+                  tooltip: 'Clear Map Cache',
                 ),
               ),
 
