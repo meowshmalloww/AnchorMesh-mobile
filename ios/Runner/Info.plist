@@ -4,8 +4,8 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.development.heyblue.mesh.refresh</string>
-		<string>com.development.heyblue.mesh.processing</string>
+		<string>com.development.anchormesh.mesh.refresh</string>
+		<string>com.development.anchormesh.mesh.processing</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>

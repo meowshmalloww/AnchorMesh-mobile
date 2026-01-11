@@ -17,8 +17,8 @@ class BLEManager: NSObject {
     static let characteristicUUID = CBUUID(string: "12345678-1234-1234-1234-123456789ABD")
 
     /// State restoration identifier
-    static let centralRestoreId = "com.development.heyblue.central"
-    static let peripheralRestoreId = "com.development.heyblue.peripheral"
+    static let centralRestoreId = "com.development.anchormesh.central"
+    static let peripheralRestoreId = "com.development.anchormesh.peripheral"
 
     /// Status codes from SOS packet (byte 16)
     static let STATUS_SAFE: UInt8 = 0x00

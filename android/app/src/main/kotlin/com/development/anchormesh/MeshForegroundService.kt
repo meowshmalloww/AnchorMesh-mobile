@@ -1,4 +1,4 @@
-package com.development.heyblue
+package com.development.anchormesh
 
 import android.app.*
 import android.content.Intent
@@ -18,7 +18,7 @@ class MeshForegroundService : Service() {
         private const val TAG = "MeshForegroundService"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "mesh_sos_channel"
-        private const val CHANNEL_NAME = "Mesh SOS Service"
+        private const val CHANNEL_NAME = "AnchorMesh Service"
     }
     
     private var bleManager: BLEManager? = null
@@ -76,7 +76,7 @@ class MeshForegroundService : Service() {
         )
         
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Mesh SOS Active")
+            .setContentTitle("AnchorMesh Active")
             .setContentText("Scanning for emergency signals")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)

@@ -6,6 +6,7 @@ import '../services/connectivity_service.dart' hide AlertLevel;
 import '../services/disaster_service.dart';
 import '../theme/resq_theme.dart';
 import '../painters/custom_borders.dart';
+import '../widgets/sync_status_widget.dart';
 import 'disaster_map_page.dart';
 import '../services/platform_service.dart';
 import 'settings_page.dart';
@@ -224,7 +225,7 @@ class _HomePageState extends State<HomePage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'ResQ',
+              'AnchorMesh',
               style: TextStyle(
                 color: colors.textPrimary,
                 fontSize: 28,
@@ -284,27 +285,34 @@ class _HomePageState extends State<HomePage>
   }
 
   Widget _buildStatusRow(ResQColors colors) {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: _buildStatusPill(
-            icon: Icons.bluetooth,
-            label: 'Mesh',
-            value: _getBleStatusText(),
-            color: _getBleStatusColor(colors),
-            colors: colors,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatusPill(
+                icon: Icons.bluetooth,
+                label: 'Mesh',
+                value: _getBleStatusText(),
+                color: _getBleStatusColor(colors),
+                colors: colors,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatusPill(
+                icon: Icons.sensors,
+                label: 'Active',
+                value: '$_activeSosCount SOS',
+                color: _activeSosCount > 0 ? colors.accent : colors.textSecondary,
+                colors: colors,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildStatusPill(
-            icon: Icons.sensors,
-            label: 'Active',
-            value: '$_activeSosCount SOS',
-            color: _activeSosCount > 0 ? colors.accent : colors.textSecondary,
-            colors: colors,
-          ),
-        ),
+        const SizedBox(height: 12),
+        // Cloud Sync Status
+        const SyncStatusWidget(compact: true, showSyncButton: false),
       ],
     );
   }

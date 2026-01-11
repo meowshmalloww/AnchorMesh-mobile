@@ -10,8 +10,8 @@ class BackgroundTaskManager {
     static let shared = BackgroundTaskManager()
     
     // Task identifiers
-    static let refreshTaskId = "com.development.heyblue.mesh.refresh"
-    static let processingTaskId = "com.development.heyblue.mesh.processing"
+    static let refreshTaskId = "com.development.anchormesh.mesh.refresh"
+    static let processingTaskId = "com.development.anchormesh.mesh.processing"
     
     // USGS API
     static let usgsAPI = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_hour.geojson"
@@ -164,7 +164,7 @@ class DisasterCheckOperation: Operation {
         let content = UNMutableNotificationContent()
         content.title = hasDisaster ? "⚠️ Disaster Alert" : "📡 Mesh Mode"
         content.body = hasDisaster 
-            ? "Earthquake detected. Mesh SOS activated."
+            ? "Earthquake detected. AnchorMesh activated."
             : "Internet unavailable. Mesh mode recommended."
         content.sound = .default
         

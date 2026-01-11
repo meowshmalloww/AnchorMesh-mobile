@@ -1,4 +1,4 @@
-/// API Configuration for Mesh SOS App
+/// API Configuration for AnchorMesh App
 /// IMPORTANT: API usage is strictly rate-limited to conserve quotas
 library;
 
@@ -64,6 +64,14 @@ class ApiConfig {
   /// FREE - No API key required
   static const String usgsEarthquakeApi =
       'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson';
+
+  /// USGS Earthquakes - Last 7 days (for historical view)
+  static const String usgsEarthquakeWeekApi =
+      'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_week.geojson';
+
+  /// USGS Earthquakes - Last 30 days (for extended history)
+  static const String usgsEarthquakeMonthApi =
+      'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson';
 
   /// USGS significant earthquakes only (for quick checks)
   static const String usgsSignificantApi =

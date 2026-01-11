@@ -10,6 +10,7 @@ import '../models/settings_enums.dart';
 import 'alerts_history_page.dart';
 import 'region_selection_page.dart';
 import '../theme_notifier.dart';
+import '../widgets/sync_status_widget.dart';
 
 // Re-export for backward compatibility
 export '../models/settings_enums.dart';
@@ -378,6 +379,19 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
 
           const SizedBox(height: 12),
+
+          // Cloud Sync Section
+          _buildSectionCard(
+            title: 'Cloud Sync',
+            icon: Icons.cloud,
+            iconColor: Colors.indigo,
+            children: const [
+              Padding(
+                padding: EdgeInsets.all(12),
+                child: SyncStatusWidget(compact: false, showSyncButton: true),
+              ),
+            ],
+          ),
 
           const SizedBox(height: 12),
 
@@ -863,7 +877,7 @@ class _SettingsPageState extends State<SettingsPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('How Mesh SOS Works'),
+        title: const Text('How AnchorMesh Works'),
         content: const SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
