@@ -477,11 +477,9 @@ class BLEService {
         _errorController.add('Network congestion: dropping oldest relays.');
       }
 
-      // Drop oldest forwarded packet (from the end of the list)
-      // We protect index 0 if it's us, but we generally relay from end.
-      // Actually relay logic iterates.
-      // Simple strategy: Remove last item.
-      _broadcastQueue.removeLast();
+      // Drop oldest forwarded packet (from the front of the list - FIFO)
+      // This ensures newer, more relevant packets are prioritized
+      _broadcastQueue.removeAt(0);
     }
 
     // Add or update in queue

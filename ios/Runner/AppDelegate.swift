@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import BackgroundTasks
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -32,12 +33,15 @@ import BackgroundTasks
             self?.setupChannelsIfNeeded()
         }
 
+        // Register for local notifications
+        UNUserNotificationCenter.current().delegate = self
+
         // Schedule background refresh
         BackgroundTaskManager.shared.scheduleRefresh()
 
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }
-    
+
     private func setupLowPowerModeObserver() {
         lowPowerModeObserver = NotificationCenter.default.addObserver(
             forName: .NSProcessInfoPowerStateDidChange,
@@ -47,7 +51,7 @@ import BackgroundTasks
             self?.notifyLowPowerModeChanged()
         }
     }
-    
+
     private func notifyLowPowerModeChanged() {
         let isLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         platformChannel?.invokeMethod("onLowPowerModeChanged", arguments: isLowPower)
@@ -67,18 +71,18 @@ import BackgroundTasks
         setupPlatformChannel(controller: controller)
         isChannelsSetup = true
     }
-    
+
     private func setupPlatformChannel(controller: FlutterViewController) {
         platformChannel = FlutterMethodChannel(
             name: "com.project_flutter/platform",
             binaryMessenger: controller.binaryMessenger
         )
-        
+
         platformChannel?.setMethodCallHandler { [weak self] (call, result) in
             self?.handlePlatformMethodCall(call: call, result: result)
         }
     }
-    
+
     private func handlePlatformMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
         // Wrap in error handling to prevent crashes
         do {
@@ -101,7 +105,7 @@ import BackgroundTasks
             }
             UIApplication.shared.isIdleTimerDisabled = enabled
             result(UIApplication.shared.isIdleTimerDisabled)
-            
+
         case "registerBackgroundScan":
             guard let args = call.arguments as? [String: Any],
                   let serviceUUID = args["serviceUUID"] as? String else {
@@ -111,7 +115,7 @@ import BackgroundTasks
             // Store for background scanning - BLEManager handles this
             UserDefaults.standard.set(serviceUUID, forKey: "backgroundServiceUUID")
             result(true)
-            
+
         case "saveStateForRestoration":
             guard let args = call.arguments as? [String: Any] else {
                 result(FlutterError(code: "INVALID_ARGS", message: "Missing state data", details: nil))
@@ -130,14 +134,14 @@ import BackgroundTasks
                 UserDefaults.standard.set(status, forKey: "restore_status")
             }
             result(nil)
-            
+
         case "restoreState":
             let isBroadcasting = UserDefaults.standard.bool(forKey: "restore_isBroadcasting")
             let isScanning = UserDefaults.standard.bool(forKey: "restore_isScanning")
             let latitude = UserDefaults.standard.double(forKey: "restore_latitude")
             let longitude = UserDefaults.standard.double(forKey: "restore_longitude")
             let status = UserDefaults.standard.integer(forKey: "restore_status")
-            
+
             if isBroadcasting || isScanning {
                 result([
                     "isBroadcasting": isBroadcasting,
@@ -149,43 +153,43 @@ import BackgroundTasks
             } else {
                 result(nil)
             }
-            
+
         case "requestIgnoreBatteryOptimization":
             // iOS doesn't support this
             result(true)
-            
+
         case "isIgnoringBatteryOptimization":
             // iOS doesn't have battery optimization like Android
             result(true)
-            
+
         default:
             result(FlutterMethodNotImplemented)
         }
     }
-    
+
     private func setupBLEChannels(controller: FlutterViewController) {
         // Method channel for BLE commands
         let methodChannel = FlutterMethodChannel(
             name: "com.project_flutter/ble",
             binaryMessenger: controller.binaryMessenger
         )
-        
+
         methodChannel.setMethodCallHandler { [weak self] (call, result) in
             self?.handleBLEMethodCall(call: call, result: result)
         }
-        
+
         // Event channel for BLE events
         bleEventChannel = FlutterEventChannel(
             name: "com.project_flutter/ble_events",
             binaryMessenger: controller.binaryMessenger
         )
-        
+
         bleEventChannel?.setStreamHandler(BLEEventStreamHandler())
-        
+
         // Initialize BLE Manager
         BLEManager.shared.setup()
     }
-    
+
     private func handleBLEMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
         // Wrap in error handling to prevent crashes from unexpected exceptions
         do {
@@ -252,12 +256,12 @@ import BackgroundTasks
     override func applicationWillTerminate(_ application: UIApplication) {
         // Clean up BLE resources before app terminates
         BLEManager.shared.stopAll()
-        
+
         // Remove observer
         if let observer = lowPowerModeObserver {
             NotificationCenter.default.removeObserver(observer)
         }
-        
+
         super.applicationWillTerminate(application)
     }
 }
@@ -269,9 +273,43 @@ class BLEEventStreamHandler: NSObject, FlutterStreamHandler {
         BLEManager.shared.setEventSink(events)
         return nil
     }
-    
+
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
         BLEManager.shared.setEventSink(nil)
         return nil
+    }
+}
+
+// MARK: - UNUserNotificationCenterDelegate
+
+extension AppDelegate {
+    // Handle notification when app is in foreground
+    override func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let userInfo = notification.request.content.userInfo
+        print("Foreground notification: \(userInfo)")
+
+        // Show banner, sound, and badge even when in foreground for emergency alerts
+        if #available(iOS 14.0, *) {
+            completionHandler([.banner, .sound, .badge, .list])
+        } else {
+            completionHandler([.alert, .sound, .badge])
+        }
+    }
+
+    // Handle notification tap
+    override func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+        print("Notification tapped: \(userInfo)")
+
+        // Handle the notification tap - Flutter will handle navigation
+        completionHandler()
     }
 }

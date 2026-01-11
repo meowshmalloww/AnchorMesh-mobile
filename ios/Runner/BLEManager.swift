@@ -191,18 +191,18 @@ class BLEManager: NSObject {
             return
         }
 
-        // Extract lat/lon (bytes 8-15, stored as int * 10^7, little endian)
+        // Extract lat/lon (bytes 8-15, stored as int * 10^7, BIG ENDIAN - matches Flutter encoding)
         let latE7 = Int32(bitPattern:
-            UInt32(packetData[8]) |
-            (UInt32(packetData[9]) << 8) |
-            (UInt32(packetData[10]) << 16) |
-            (UInt32(packetData[11]) << 24)
+            (UInt32(packetData[8]) << 24) |
+            (UInt32(packetData[9]) << 16) |
+            (UInt32(packetData[10]) << 8) |
+            UInt32(packetData[11])
         )
         let lonE7 = Int32(bitPattern:
-            UInt32(packetData[12]) |
-            (UInt32(packetData[13]) << 8) |
-            (UInt32(packetData[14]) << 16) |
-            (UInt32(packetData[15]) << 24)
+            (UInt32(packetData[12]) << 24) |
+            (UInt32(packetData[13]) << 16) |
+            (UInt32(packetData[14]) << 8) |
+            UInt32(packetData[15])
         )
 
         let lat = Double(latE7) / 10000000.0
@@ -522,10 +522,6 @@ extension BLEManager: CBCentralManagerDelegate {
             break
         }
     }
-    
-// MARK: - CBCentralManagerDelegate
-
-extension BLEManager: CBCentralManagerDelegate {
     
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {

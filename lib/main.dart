@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
+import 'pages/onboarding_page.dart';
+import 'services/onboarding_service.dart';
 import 'theme_notifier.dart';
 import 'theme/resq_theme.dart';
 import 'services/platform_service.dart';
@@ -205,7 +207,26 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             useMaterial3: true,
             extensions: const [ResQColors.dark],
           ),
-          home: const HomeScreen(),
+          home: FutureBuilder<bool>(
+            future: OnboardingService.instance.isOnboardingComplete(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                // Show loading state while checking onboarding status
+                return const Scaffold(
+                  body: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+
+              final isComplete = snapshot.data ?? false;
+              if (isComplete) {
+                return const HomeScreen();
+              } else {
+                return const OnboardingPage();
+              }
+            },
+          ),
         );
       },
     );

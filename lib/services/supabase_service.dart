@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/sos_packet.dart';
 import 'packet_store.dart';
@@ -354,6 +357,44 @@ class SupabaseService {
   /// Force a sync now (for manual refresh)
   Future<SyncResult> forceSyncNow() async {
     return syncPendingPackets();
+  }
+
+  /// Register push token with Supabase via edge function
+  Future<bool> registerPushToken(String token) async {
+    if (!_connectivity.isOnline) {
+      debugPrint('Cannot register push token - offline');
+      return false;
+    }
+
+    try {
+      final userId = await _packetStore.getUserId();
+      final deviceId = userId.toRadixString(16).padLeft(8, '0');
+
+      final response = await http.post(
+        Uri.parse('${ApiConfig.supabaseUrl}/functions/v1/register-push-token'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${ApiConfig.supabaseAnonKey}',
+        },
+        body: jsonEncode({
+          'device_id': deviceId,
+          'push_token': token,
+          'platform': Platform.isIOS ? 'ios' : 'android',
+          'app_version': '1.0.0',
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        debugPrint('Push token registered successfully');
+        return true;
+      } else {
+        debugPrint('Failed to register push token: ${response.body}');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('Error registering push token: $e');
+      return false;
+    }
   }
 
   /// Dispose resources

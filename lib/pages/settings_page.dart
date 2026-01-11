@@ -6,9 +6,11 @@ import 'package:geolocator/geolocator.dart'; // Added for location
 import '../services/packet_store.dart';
 import '../services/offline_map_service.dart';
 import '../services/ble_service.dart';
+import '../services/onboarding_service.dart';
 import '../models/settings_enums.dart';
 import 'alerts_history_page.dart';
 import 'region_selection_page.dart';
+import 'onboarding_page.dart';
 import '../theme_notifier.dart';
 import '../widgets/sync_status_widget.dart';
 
@@ -474,6 +476,21 @@ class _SettingsPageState extends State<SettingsPage> {
                 title: const Text('How it works'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _showHowItWorksDialog(context),
+              ),
+              ListTile(
+                leading: const Icon(Icons.refresh, color: Colors.orange),
+                title: const Text('Redo Onboarding'),
+                subtitle: const Text('Review permissions and setup again'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () async {
+                  await OnboardingService.instance.resetOnboarding();
+                  if (context.mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const OnboardingPage()),
+                      (route) => false,
+                    );
+                  }
+                },
               ),
             ],
           ),
