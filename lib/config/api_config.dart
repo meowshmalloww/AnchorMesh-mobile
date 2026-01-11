@@ -21,8 +21,6 @@ class ApiConfig {
   // 🗺️ MAP TILES
   // ========================================
 
-  /// MapTiler API Key (DISABLED by default to save quota)
-  /// Set useMapTiler = true to enable
   static const String mapTilerApiKey =
       'RTqHkOZyon4AG1STywyT'; // !MapTiler APi Key
 
