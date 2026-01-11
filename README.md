@@ -81,7 +81,7 @@ GPS coordinates are compressed to integers for ~1.1cm precision.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/anchormesh.git
+git clone https://github.com/meowshmalloww/anchormesh.git
 cd anchormesh
 
 # Install dependencies
@@ -109,20 +109,26 @@ flutter run
 lib/
 ├── main.dart                 # App entry point
 ├── home_screen.dart          # Main navigation scaffold
+├── theme_notifier.dart       # Theme state management
 ├── config/
 │   └── api_config.dart       # API endpoints configuration
 ├── models/
 │   ├── sos_packet.dart       # SOS packet data model
 │   ├── sos_status.dart       # Status enums
 │   ├── ble_models.dart       # BLE data models
-│   └── disaster_event.dart   # Disaster event model
+│   ├── disaster_event.dart   # Disaster event model
+│   └── settings_enums.dart   # Settings enumerations
 ├── pages/
 │   ├── home_page.dart        # Dashboard
-│   ├── map_page.dart         # Map view
+│   ├── map_page.dart         # Mesh network map
+│   ├── disaster_map_page.dart # Disaster events map
 │   ├── sos_page.dart         # SOS controls
 │   ├── settings_page.dart    # App settings
 │   ├── offline_utility_page.dart
 │   ├── signal_locator_page.dart
+│   ├── compass_pointer_page.dart
+│   ├── alerts_history_page.dart
+│   ├── region_selection_page.dart
 │   └── onboarding_page.dart
 ├── services/
 │   ├── ble_service.dart      # BLE mesh operations
@@ -131,11 +137,30 @@ lib/
 │   ├── connectivity_service.dart
 │   ├── notification_service.dart
 │   ├── disaster_service.dart
-│   └── platform_service.dart
+│   ├── platform_service.dart
+│   ├── offline_map_service.dart
+│   ├── offline_tile_provider.dart
+│   └── onboarding_service.dart
+├── painters/
+│   ├── compass_painter.dart  # Compass UI rendering
+│   ├── custom_borders.dart   # Custom border painters
+│   └── mesh_background_painter.dart
+├── utils/
+│   ├── morse_code_translator.dart
+│   ├── permission_checker.dart
+│   └── rssi_calculator.dart  # Signal strength calculations
 ├── widgets/
 │   ├── sos_button.dart
 │   ├── proximity_radar.dart
-│   └── ...
+│   ├── sync_status_widget.dart
+│   ├── sos_alert_overlay.dart
+│   ├── sos_notification_banner.dart
+│   ├── frosted_app_bar.dart
+│   ├── resq_nav_bar.dart
+│   └── offline/
+│       ├── strobe_control.dart
+│       ├── compass_pointer.dart
+│       └── ultrasonic_control.dart
 └── theme/
     └── resq_theme.dart
 ```
@@ -169,6 +194,13 @@ lib/
 - **compassx** - Magnetic compass
 - **torch_light** - Flashlight control
 - **flutter_local_notifications** - SOS alerts
+- **battery_plus** - Battery monitoring
+- **device_info_plus** - Device information
+- **screen_brightness** - Screen brightness control
+- **record** - Audio recording
+- **fftea** - FFT for audio processing
+- **shared_preferences** - Local settings storage
+- **permission_handler** - Runtime permissions
 
 ---
 
@@ -186,4 +218,4 @@ Copyright (c) 2026 ResQ Team. All Rights Reserved.
 
 ---
 
-*2025 Alameda County Hackathon*
+*2026 Alameda County Hackathon*
