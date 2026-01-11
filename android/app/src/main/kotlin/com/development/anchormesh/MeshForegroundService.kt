@@ -35,14 +35,23 @@ class MeshForegroundService : Service() {
         
         val notification = createNotification()
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID, 
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Combine types if needed, currently using connectedDevice
+                // Note: If you add location tracking in this service, you must add FOREGROUND_SERVICE_TYPE_LOCATION
+                startForeground(
+                    NOTIFICATION_ID, 
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start foreground service", e)
+            e.printStackTrace()
+            // If we can't run in foreground, we should stop to avoid ANR/Crash
+            stopSelf()
         }
         
         // Start mesh scanning in background

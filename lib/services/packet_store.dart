@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -73,6 +74,9 @@ class PacketStore {
       version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onOpen: (db) async {
+        await _deleteOldPackets(db);
+      },
     );
   }
 
@@ -142,12 +146,50 @@ class PacketStore {
       )
     ''');
 
-    // Create indexes
-    await db.execute('CREATE INDEX idx_packets_user ON packets(userId)');
+    // Create indexes for performance
     await db.execute(
-      'CREATE INDEX idx_packets_timestamp ON packets(timestamp)',
+      'CREATE INDEX IF NOT EXISTS idx_packets_user ON packets (userId)',
     );
-    await db.execute('CREATE INDEX idx_packets_synced ON packets(isSynced)');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_packets_timestamp ON packets (timestamp)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_seen_uniqueId ON seen_packets (uniqueId)',
+    );
+
+    // Cleanup old packets on init
+    await _deleteOldPackets(db);
+  }
+
+  /// Delete packets older than 24 hours to keep DB lean
+  Future<void> _deleteOldPackets(Database db) async {
+    try {
+      final cutoff =
+          DateTime.now()
+              .subtract(const Duration(hours: 24))
+              .millisecondsSinceEpoch ~/
+          1000;
+      await db.delete('packets', where: 'timestamp < ?', whereArgs: [cutoff]);
+
+      // Also cleanup seen_packets (using milliseconds)
+      final seenCutoff = DateTime.now()
+          .subtract(const Duration(hours: 24))
+          .millisecondsSinceEpoch;
+      await db.delete(
+        'seen_packets',
+        where: 'seenAt < ?',
+        whereArgs: [seenCutoff],
+      );
+
+      // Cleanup broadcast queue for old packets
+      await db.rawDelete('''
+        DELETE FROM broadcast_queue 
+        WHERE packetId NOT IN (SELECT id FROM packets)
+      ''');
+    } catch (e) {
+      // Ignore cleanup errors during init
+      developer.log('Database cleanup error: $e');
+    }
   }
 
   // ==================
@@ -207,7 +249,8 @@ class PacketStore {
       final packetJson = packet.toJson()
         ..['receivedAt'] = DateTime.now().millisecondsSinceEpoch
         ..['isLocalOrigin'] = 1
-        ..['isSynced'] = 1; // Mark as "synced" so it's never picked up for cloud sync
+        ..['isSynced'] =
+            1; // Mark as "synced" so it's never picked up for cloud sync
 
       await db.insert(
         'packets',

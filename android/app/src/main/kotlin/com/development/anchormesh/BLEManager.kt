@@ -331,7 +331,7 @@ class BLEManager(private val context: Context) {
                 val parameters = AdvertisingSetParameters.Builder()
                     .setLegacyMode(false) // Use extended PDUs
                     .setConnectable(true)
-                    .setInterval(AdvertisingSetParameters.INTERVAL_LOW)
+                    .setInterval(AdvertisingSetParameters.INTERVAL_MEDIUM)
                     .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
                     .setPrimaryPhy(BluetoothDevice.PHY_LE_CODED) // Long Range
                     .setSecondaryPhy(BluetoothDevice.PHY_LE_CODED)
@@ -365,7 +365,7 @@ class BLEManager(private val context: Context) {
         val advertiser = bluetoothLeAdvertiser ?: return false
         
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .setConnectable(true)
             .setTimeout(0) // Advertise indefinitely
@@ -504,7 +504,7 @@ class BLEManager(private val context: Context) {
 
         // Configure scan settings
         val settingsBuilder = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
             
         // Enable Extended Advertising / Coded PHY support if available
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && supportsBle5()) {

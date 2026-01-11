@@ -1,99 +1,124 @@
-# ResQ - Offline Disaster Resilience 🛟
-> *Stay Connected When It Matters Most.*
+# AnchorMesh ⚓
+### 2025 Alameda Hackathon (Jan 1 - 11)
 
-**ResQ** is a decentralized, offline-first disaster communication platform designed to keep communities connected even when cellular networks fail. Built with **Flutter**, it creates an ad-hoc mesh network between devices using **Bluetooth Low Energy (BLE)** and **Ultrasonic** sound waves to propagate SOS signals and critical alerts.
+**"Even if you don’t need rescue, hold out the phone so SOS messages can pass through!"**
 
----
-
-## 🚀 Key Features
-
-### 📡 Offline Mesh Network
-- **BLE Mesh**: Uses both **Legacy (BLE 4.0)** and **Extended (BLE 5.0)** advertising to maximize compatibility and range.
-- **Ultrasonic SOS**: Transmits emergency data via high-frequency sound waves for devices without BLE or as a redundant channel.
-- **Relay System**: Every phone acts as a node, relaying active SOS packets to extend the network reach automatically.
-
-### 🗺️ Disaster Intelligence
-- **Real-Time Map**: Aggregates data from **USGS (Earthquakes), NOAA (Weather), and GDACS (Global Disasters)**.
-- **Offline Maps**: Pre-download critical map tiles (OpenStreetMap) for use without internet.
-- **Danger Zones**: Visualizes impact radius for earthquakes, fires, and floods dynamically.
-- **Smart Filtering**: Auto-filters alerts based on your proximity (200km radius) to reduce panic fatigue.
-
-### 🔋 Survival Utilities
-- **Battery Optimization**: Intelligent duty cycling for BLE scanning to last days in emergencies.
-- **Compass Navigation**: Built-in compass for wayfinding when GPS maps are unavailable.
-- **Signal Locator**: Detects signal strength (RSSI) of nearby mesh nodes to help locate survivors.
-
-### ☁️ Hybrid Connectivity
-- **Cloud Sync**: Automatically syncs critical data to Supabase when intermittent internet is detected.
-- **Weather Fallback**: Checks multiple APIs (OpenWeatherMap + Standard Forecast) to ensure weather data availability.
+AnchorMesh is a **Store-and-Forward Offline Mesh Network** designed for natural disasters when cell service and Wi-Fi fail. It turns every smartphone into a rescue node, creating a decentralized network where "Everyone is a Carrier."
 
 ---
 
-## 🛠️ Tech Stack
+## 📱 Key Highlights
+*   **App Size**: Optimized (< 100MB)
+*   **Battery First**: Intelligent Sleep/Scan windows to run 24+ hours.
+*   **Secure Public**: "Epidemic Routing" - Packets are encrypted and public; devices relay them without knowing the content.
+*   **Tech Stack**: Flutter + Dart (Cross-Platform).
 
-- **Framework**: [Flutter](https://flutter.dev) (iOS & Android)
-- **Language**: Dart 3
-- **Hardware Comms**:
-  - `flutter_blue_plus` (BLE)
-  - `flutter_quiet` (Ultrasonic Data Transmission)
-- **Mapping**:
-  - `flutter_map` (OpenStreetMap)
-  - `latlong2`
-- **Backend / Sync**: Supabase
-- **State Management**: Provider / Streams
+## 🌪️ Built For Natural Disasters
+Designed to work during:
+*   Earthquakes, Tsunamis, Volcanic Eruptions
+*   Floods, Hurricanes, Tornadoes, Wildfires
 
----
+### 🚨 Alert Levels
+*   🔴 **Red (Critical)**: Trapped, immediate danger.
+*   🟡 **Yellow (Injured)**: Need medical aid or supplies.
+*   🟢 **Green (Safe)**: "I AM SAFE" - Stops the SOS propagation for this user.
 
-## ⚡ Getting Started
-
-### Prerequisites
-- [Flutter SDK](https://docs.flutter.dev/get-started/install) (3.10+)
-- Android device (API 21+) or iOS device (iOS 12+) for BLE features.
-
-### Installation
-
-1. **Clone the repo**
-   ```bash
-   git clone https://github.com/yourusername/project_flutter.git
-   cd project_flutter
-   ```
-
-2. **Install dependencies**
-   ```bash
-   flutter pub get
-   ```
-
-3. **Run the app**
-   ```bash
-   flutter run
-   ```
+> **Note**: Users cannot edit the SOS message text manually. They can only select from pre-defined, compressed status codes to ensure data integrity and small packet size.
 
 ---
 
-## 📱 Permissions
+## 📡 The Mesh: Epidemic Routing
+AnchorMesh uses **Store-and-Forward** logic:
 
-ResQ requires the following permissions to function in an emergency:
-- **Location**: To pinpoint SOS coordinates and filter local disasters.
-- **Bluetooth**: To scan for and advertise mesh packets.
-- **Microphone**: To decode ultrasonic SOS signals (optional).
+1.  **User A (Trapped)**: Posts an SOS.
+2.  **User B (Passerby)**: Comes within range. Their phone silently downloads User A's packet.
+3.  **User B Walks**: They carry the packet until they meet User C or find Internet.
+4.  **Internet Sync**: If User B finds a signal, the app automatically uploads User A's message to the Rescue Server.
+
+### 📶 Bluetooth Low Energy (BLE) Specs
+*   **Range**: 30-100m (Indoor/Urban), up to 400m (Open Air).
+*   **MTU (Maximum Transmission Unit)**:
+    *   **Android**: Up to 514 bytes (configurable).
+    *   **iOS**: System managed (typically 185-527 bytes depending on model).
+*   **Connections**: Phones maintain 3-7 simultaneous connections.
+
+### 💾 Data Compression & Protocol
+To maximize reliability, we compress GPS coordinates into **Integers**:
+
+*   **Float64 (Standard)**: 16 bytes (Too large)
+*   **AnchorMesh Optimization**:
+    *   Formula: `round(Coordinate * 10^7)`
+    *   Example: `40.6424741` → `406424741` (Fits in 4 bytes)
+    *   **Precision**: ~1.1 cm (Rescue grade)
+    *   **Total Packet Size**: ~25 Bytes.
+
+**Packet Blueprint:**
+| Byte | Field | Size | Details |
+|------|-------|------|---------|
+| 0-1 | **Header** | 2B | `0xFFFF` (App Handshake) |
+| 2-5 | **User ID** | 4B | Random 32-bit Integer |
+| 6-7 | **Sequence** | 2B | Counter (increments on move) |
+| 8-11 | **Latitude** | 4B | Scaled Integer (`Lat * 10^7`) |
+| 12-15 | **Longitude**| 4B | Scaled Integer (`Lon * 10^7`) |
+| 16 | **Status** | 1B | `0x00`=Safe, `0x01`=SOS, etc. |
+| 17-20| **Timestamp**| 4B | Unix Seconds (Epoch) |
 
 ---
 
-## 🤝 Contribution
+## 🤖 Platform Specifics
 
-This is a hackathon project! Ideas for future improvements:
-- WiFi Direct integration for high-bandwidth file sharing.
-- LoRa hardware integration for long-range (km+) communication.
+### iOS Implementation 🍎
+*   **Foreground**: Sets `isIdleTimerDisabled = true` to keep screen/radio active.
+*   **Background**:
+    *   **Scanning**: BLE Background Mode listens for our Service UUID (`1234...`).
+    *   **Broadcasting**: Moves data to the "Overflow Area" (Hashed UUID).
+    *   **Wake Up**: If a signal is detected, iOS wakes the app for ~10 seconds to process/relay.
+*   **Limitations**:
+    *   **Low Power Mode**: Cannot be overridden. App warnings user to disable it.
+    *   **Throttling**: Background scans are strictly managed by iOS.
+
+### Android Implementation 🤖
+*   **Battery Optimization**: App requests `ACTION_IGNORE_BATTERY_OPTIMIZATIONS` for continuous background scanning.
+*   **Boot Receiver**: Auto-starts the "Rescue Listener" service on phone reboot (silent operation).
+*   **Dual-Mode Advertising**:
+    *   **Legacy (4.x)**: Small packets (31 bytes), compatible with all phones.
+    *   **Extended (5.0+)**: larger packets (255+ bytes), better range/speed.
 
 ---
 
-## ⚖️ License
+## ⚡ Smart Triggers & Automation
+The Mesh doesn't run 24/7 to save battery. It auto-activates based on:
 
-**© 2026 ResQ Team. All Rights Reserved.**
+1.  **Internet Loss**: Pings Google/Apple. If 3 consecutive failures occur over 1 hour -> **Auto-Activate SOS Mode**.
+2.  **API Alerts**: Background fetch (every 30 mins) checks USGS/NOAA.
+    *   **Magnitude 6.0+ Earthquake** OR **Severe Weather** in Zip Code -> **Wake Up & Scan**.
+3.  **Boot Recovery**: Android automatically restarts the listener after a device reboot.
 
-This project is submitted for **Hackathon Evaluation Only**.
-- ✅ **Allowed**: Judges may view, build, and run the code for evaluation.
-- ❌ **Prohibited**: Commercial use, redistribution, or modification without permission is strictly forbidden.
+## 🔋 Battery Strategy
+| Mode | Scan Window | Sleep Window | Est. Battery Life |
+|------|-------------|--------------|-------------------|
+| **SOS Active** | Always On | None | 6-8 Hours |
+| **Bridge (Default)** | 30 Seconds | 30 Seconds | 12+ Hours |
+| **Battery Saver** | 5 Seconds | 55 Seconds | 24+ Hours |
+| **Level 5 (Peace)** | OFF | OFF | Normal Phone Usage |
 
-See [LICENSE](LICENSE) for full legal text.
+---
 
+## 🛠️ Offline Utilities
+Since the internet is gone, AnchorMesh provides survival tools:
+*   **Ultrasonic SOS** 🔊: Encodes SOS data into high-freq audio (17kHz-20kHz) for verified close-range (1-5m) transfer.
+*   **Signal Locator** ♨️: "Hot/Cold" RSSI meter to find victims behind rubble.
+*   **Map**: Offline tile support (OpenStreetMap).
+*   **Compass**: Magnetic heading.
+
+---
+
+## 🔄 Sync & Feedback
+*   **Echo Feedback**: If you hear your *own* packet broadcast by someone else, the app notifies you: "Signal Relayed! 2 copies nearby."
+*   **Cloud Sync**: When Internet returns, the app uploads all stored packets to the server.
+    *   **Kill Switch**: Receiving a server acknowledgement deletes the local packet to stop the mesh from echoing old data.
+*   **Deduplication**: Remembers `UUID + Sequence`. Ignores duplicates, processes only new info (Sequence N+1).
+
+---
+
+> **Note**: This project acts as a "Two-Way" system. Rescuers can broadcast "Targeted Messages" (e.g., Supply Drop Location) back into the mesh to reach specific victims.
