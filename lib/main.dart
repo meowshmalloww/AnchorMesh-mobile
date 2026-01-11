@@ -178,7 +178,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       builder: (context, themeMode, child) {
         return MaterialApp(
           navigatorKey: navigatorKey,
-          title: 'Mesh SOS',
+          title: 'AnchorMesh',
           debugShowCheckedModeBanner: false,
           themeMode: themeMode,
           theme: ThemeData(

@@ -190,6 +190,15 @@ class SupabaseService {
 
       for (final packet in packets) {
         try {
+          // SAFETY CHECK: Never sync packets we originated
+          // This is defense-in-depth - getUnsyncedPackets() should already filter these out
+          if (packet.userId == myUserId) {
+            if (packet.dbId != null) {
+              syncedIds.add(packet.dbId!); // Mark as synced to prevent future attempts
+            }
+            continue;
+          }
+
           final result = await _syncPacket(packet, myDeviceId);
 
           if (result['success'] == true) {

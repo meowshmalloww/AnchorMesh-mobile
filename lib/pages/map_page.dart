@@ -120,7 +120,7 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
                 urlTemplate: ApiConfig.hasMapTiler
                     ? ApiConfig.mapTilerStreetsUrl
                     : ApiConfig.osmTileUrl,
-                userAgentPackageName: 'com.development.heyblue',
+                userAgentPackageName: 'com.development.anchormesh',
                 maxZoom: ApiConfig.maxMapZoom,
               ),
 

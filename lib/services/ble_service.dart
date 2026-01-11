@@ -579,8 +579,9 @@ class BLEService {
     // Add to broadcast queue
     _addToQueue(packet);
 
-    // Save locally
-    await _packetStore.savePacket(packet);
+    // Save locally (marked as local origin - will NEVER be synced to cloud)
+    // Only devices that receive this via BLE can relay it to the dashboard
+    await _packetStore.saveLocalPacket(packet);
 
     // Trigger immediate broadcast attempt
     try {

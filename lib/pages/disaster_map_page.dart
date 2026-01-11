@@ -142,7 +142,7 @@ class _DisasterMapPageState extends State<DisasterMapPage>
             children: [
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.development.heyblue',
+                userAgentPackageName: 'com.development.anchormesh',
                 maxZoom: 18,
               ),
               ValueListenableBuilder<double>(

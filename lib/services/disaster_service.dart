@@ -53,6 +53,10 @@ class DisasterService {
   bool get isSosAutoUnlocked => _sosAutoUnlocked;
   AlertLevel get currentLevel => _currentLevel;
 
+  // Historical events (fetched on demand)
+  List<DisasterEvent> _historicalEvents = [];
+  List<DisasterEvent> get historicalEvents => _historicalEvents;
+
   // Rate limiting - independent timers (uses ApiConfig)
   DateTime? _lastUsgsCheck;
   DateTime? _lastNoaaCheck;
@@ -199,7 +203,7 @@ class DisasterService {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 10);
       final request = await client.getUrl(Uri.parse(ApiConfig.noaaAlertsApi));
-      request.headers.set('User-Agent', 'ResQ Emergency App');
+      request.headers.set('User-Agent', 'AnchorMesh Emergency App');
       request.headers.set('Accept', 'application/geo+json');
       final response = await request.close();
 
@@ -634,6 +638,69 @@ class DisasterService {
   }
 
   Future<void> refresh() => _fetchAllSources();
+
+  /// Fetch historical events (last 7 days or 30 days)
+  /// This is a separate call to avoid rate limiting issues
+  Future<List<DisasterEvent>> fetchHistoricalEvents({
+    bool useMonthData = false,
+  }) async {
+    if (!await ConnectivityChecker.instance.checkInternet()) {
+      return _historicalEvents;
+    }
+
+    final List<DisasterEvent> events = [];
+
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 15);
+      final url = useMonthData
+          ? ApiConfig.usgsEarthquakeMonthApi
+          : ApiConfig.usgsEarthquakeWeekApi;
+      final request = await client.getUrl(Uri.parse(url));
+      final response = await request.close();
+
+      if (response.statusCode == 200) {
+        final body = await response.transform(utf8.decoder).join();
+        final data = jsonDecode(body);
+        final features = data['features'] as List;
+
+        for (var f in features) {
+          final props = f['properties'];
+          final geom = f['geometry'];
+          final coords = geom['coordinates'] as List;
+          final time = DateTime.fromMillisecondsSinceEpoch(props['time']);
+          final mag = (props['mag'] as num?)?.toDouble() ?? 0.0;
+
+          events.add(
+            DisasterEvent(
+              id: f['id'],
+              type: 'earthquake',
+              title: props['title'] ?? 'Earthquake M$mag',
+              description: 'Magnitude $mag',
+              severity: mag >= 6.0 ? 'High' : (mag >= 4.5 ? 'Medium' : 'Low'),
+              time: time,
+              latitude: (coords[1] as num).toDouble(),
+              longitude: (coords[0] as num).toDouble(),
+              sourceUrl: props['url'],
+              magnitude: mag,
+            ),
+          );
+        }
+      }
+
+      developer.log(
+        'Historical: Fetched ${events.length} earthquakes (${useMonthData ? "month" : "week"})',
+      );
+    } catch (e) {
+      developer.log('Error fetching historical events: $e');
+    }
+
+    // Sort by time, newest first
+    events.sort((a, b) => b.time.compareTo(a.time));
+    _historicalEvents = events;
+
+    return events;
+  }
 
   /// Get events that meet auto-unlock thresholds
   List<DisasterEvent> get severeEvents =>

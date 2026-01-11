@@ -70,7 +70,7 @@ class PacketStore {
     final path = join(await getDatabasesPath(), 'sos_packets.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -82,6 +82,13 @@ class PacketStore {
       // Version 2: Add targetId for direct messaging
       await db.execute(
         'ALTER TABLE packets ADD COLUMN targetId INTEGER DEFAULT 0',
+      );
+    }
+    if (oldVersion < 3) {
+      // Version 3: Add isLocalOrigin to track packets created by this device
+      // Local origin packets should NEVER be synced to cloud
+      await db.execute(
+        'ALTER TABLE packets ADD COLUMN isLocalOrigin INTEGER DEFAULT 0',
       );
     }
   }
@@ -103,6 +110,7 @@ class PacketStore {
         targetId INTEGER DEFAULT 0,
         receivedAt INTEGER NOT NULL,
         isArchived INTEGER DEFAULT 0,
+        isLocalOrigin INTEGER DEFAULT 0,
         UNIQUE(userId, sequence)
       )
     ''');
@@ -189,6 +197,30 @@ class PacketStore {
     }
   }
 
+  /// Save a locally-created packet (from this device)
+  /// These packets are marked as local origin and will NEVER be synced to cloud
+  /// Use this for packets created by this device (e.g., targeted messages)
+  Future<bool> saveLocalPacket(SOSPacket packet) async {
+    final db = await database;
+
+    try {
+      final packetJson = packet.toJson()
+        ..['receivedAt'] = DateTime.now().millisecondsSinceEpoch
+        ..['isLocalOrigin'] = 1
+        ..['isSynced'] = 1; // Mark as "synced" so it's never picked up for cloud sync
+
+      await db.insert(
+        'packets',
+        packetJson,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _markSeen(packet.uniqueId);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Check if we've seen this packet ID before
   Future<bool> hasSeenPacket(String uniqueId) async {
     final db = await database;
@@ -245,11 +277,13 @@ class PacketStore {
   }
 
   /// Get unsynced packets for cloud upload
+  /// CRITICAL: Only returns packets received via BLE (not locally created)
+  /// This ensures the sender device NEVER syncs its own SOS to the cloud
   Future<List<SOSPacket>> getUnsyncedPackets() async {
     final db = await database;
     final result = await db.query(
       'packets',
-      where: 'isSynced = 0',
+      where: 'isSynced = 0 AND isLocalOrigin = 0',
       orderBy: 'timestamp ASC',
     );
     return result.map((r) => SOSPacket.fromJson(r)).toList();

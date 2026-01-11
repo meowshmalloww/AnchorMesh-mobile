@@ -4,15 +4,15 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.development.heyblue.mesh.refresh</string>
-		<string>com.development.heyblue.mesh.processing</string>
+		<string>com.development.anchormesh.mesh.refresh</string>
+		<string>com.development.anchormesh.mesh.processing</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Hey Blue</string>
+	<string>AnchorMesh</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

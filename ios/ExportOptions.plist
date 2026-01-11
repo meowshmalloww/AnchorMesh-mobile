@@ -10,7 +10,7 @@
     <string>manual</string>
     <key>provisioningProfiles</key>
     <dict>
-        <key>com.development.heyblue</key>
+        <key>com.development.anchormesh</key>
         <string>YOUR_PROVISIONING_PROFILE_NAME</string>
     </dict>
     <key>signingCertificate</key>
