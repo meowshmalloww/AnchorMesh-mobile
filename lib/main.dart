@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
 import 'pages/onboarding_page.dart';
@@ -10,6 +11,7 @@ import 'services/connectivity_service.dart';
 import 'services/supabase_service.dart';
 import 'services/ble_service.dart';
 import 'services/packet_store.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,14 +19,37 @@ void main() async {
   // Handle Flutter errors gracefully
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
+    debugPrint('Flutter error: ${details.exception}\n${details.stack}');
   };
 
-  // Initialize platform service
-  PlatformService.instance;
+  // Catch uncaught async errors (MethodChannel failures, platform exceptions, etc.)
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('Uncaught platform error: $error\n$stack');
+    return true; // Error handled, don't propagate
+  };
 
-  // Start connectivity and disaster monitoring
-  ConnectivityChecker.instance.startMonitoring();
-  DisasterMonitor.instance.startMonitoring();
+  // Initialize notification service with error handling
+  try {
+    await NotificationService.instance.initialize();
+  } catch (e) {
+    // Notification init failure is non-fatal - app still works
+    debugPrint('Notification service initialization failed: $e');
+  }
+
+  // Initialize platform service with error handling
+  try {
+    PlatformService.instance;
+  } catch (e) {
+    debugPrint('Platform service initialization failed: $e');
+  }
+
+  // Start connectivity and disaster monitoring with error handling
+  try {
+    ConnectivityChecker.instance.startMonitoring();
+    DisasterMonitor.instance.startMonitoring();
+  } catch (e) {
+    debugPrint('Monitoring services initialization failed: $e');
+  }
 
   // Initialize Supabase for cloud sync
   try {
@@ -35,7 +60,11 @@ void main() async {
   }
 
   // Start auto-activate monitoring (activates mesh on 3 failed pings)
-  PlatformService.instance.startAutoActivateMonitoring();
+  try {
+    PlatformService.instance.startAutoActivateMonitoring();
+  } catch (e) {
+    debugPrint('Auto-activate monitoring failed: $e');
+  }
 
   runApp(const MyApp());
 }
@@ -90,10 +119,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   /// Reset services on app resume (handles iOS force quit recovery)
   /// On iOS, Dart VM can persist across force quits, leaving stale database/timer state
   Future<void> _resetServicesOnResume() async {
-    // Reset stale database connections
-    await PacketStore.reset();
-    // Reinitialize BLE event channel
-    BLEService.instance.reinitializeEventChannel();
+    try {
+      // Reset stale database connections
+      await PacketStore.reset();
+      // Reinitialize BLE event channel
+      BLEService.instance.reinitializeEventChannel();
+    } catch (e) {
+      debugPrint('Error resetting services on resume: $e');
+    }
   }
 
   /// Dispose all global services when app terminates
@@ -221,7 +254,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
               final isComplete = snapshot.data ?? false;
               if (isComplete) {
-                return const HomeScreen();
+                return HomeScreen(key: homeScreenKey);
               } else {
                 return const OnboardingPage();
               }

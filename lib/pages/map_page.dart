@@ -10,6 +10,7 @@ import '../config/api_config.dart';
 import '../theme/resq_theme.dart';
 import '../services/offline_tile_provider.dart';
 import '../services/offline_map_service.dart';
+import '../home_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Map page with SOS heatmap visualization
@@ -34,6 +35,7 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
   List<SOSPacket> _packets = [];
   final ValueNotifier<double> _zoomNotifier = ValueNotifier<double>(13.0);
   StreamSubscription? _packetSubscription;
+  bool _mapReady = false;
 
   // Zoom thresholds for view modes
   static const double cityViewZoom = 10.0;
@@ -43,9 +45,34 @@ class _MapPageState extends State<MapPage> with AutomaticKeepAliveClientMixin {
   void initState() {
     super.initState();
     _loadPackets();
-    _loadPackets();
     _setupListener();
     _checkOfflineMaps();
+
+    // Check for pending emergency coordinates after map is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _mapReady = true;
+      _checkPendingNavigation();
+    });
+  }
+
+  void _checkPendingNavigation() {
+    if (!_mapReady) return;
+
+    final homeState = homeScreenKey.currentState;
+    if (homeState != null) {
+      final coords = homeState.consumePendingCoordinates();
+      if (coords != null) {
+        // Center map on emergency location with close-up zoom
+        _mapController.move(LatLng(coords.lat, coords.lon), 16.0);
+      }
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Check for pending navigation when tab becomes visible
+    _checkPendingNavigation();
   }
 
   Future<void> _checkOfflineMaps() async {

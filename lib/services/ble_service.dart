@@ -134,21 +134,21 @@ class BLEService {
   /// Number of successful handshakes (packet relays)
   int get handshakeCount => _handshakeCount;
 
+  // Track retry attempts for event channel subscription
+  int _eventChannelRetryCount = 0;
+  static const int _maxEventChannelRetries = 5;
+
   /// Initialize the BLE service
   void _init() {
     // Cancel existing subscription if any (handles reinit)
     _eventChannelSubscription?.cancel();
+    _eventChannelRetryCount = 0;
 
-    // Subscribe to native BLE events
-    _eventChannelSubscription = _eventChannel.receiveBroadcastStream().listen(
-      _handleNativeEvent,
-      onError: (dynamic error) {
-        _errorController.add(error.toString());
-      },
-      onDone: () {
-        debugPrint('BLE event channel closed');
-      },
-    );
+    // Delay subscription to allow native side to setup first
+    // This prevents race condition where Dart subscribes before iOS channel is ready
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _subscribeToEventChannel();
+    });
 
     // Start cleanup timer (every 30 minutes)
     _cleanupTimer?.cancel();
@@ -164,19 +164,56 @@ class BLEService {
     _initNotifications();
   }
 
+  /// Subscribe to native BLE event channel with retry logic
+  void _subscribeToEventChannel() {
+    try {
+      _eventChannelSubscription?.cancel();
+      _eventChannelSubscription = _eventChannel.receiveBroadcastStream().listen(
+        _handleNativeEvent,
+        onError: (dynamic error) {
+          debugPrint('BLE event channel error: $error');
+          _errorController.add(error.toString());
+        },
+        onDone: () {
+          debugPrint('BLE event channel closed');
+          // Attempt to resubscribe if channel closes unexpectedly
+          if (_eventChannelRetryCount < _maxEventChannelRetries) {
+            _eventChannelRetryCount++;
+            Future.delayed(Duration(seconds: _eventChannelRetryCount), () {
+              _subscribeToEventChannel();
+            });
+          }
+        },
+        cancelOnError: false,
+      );
+      debugPrint('BLE event channel subscribed successfully');
+      _eventChannelRetryCount = 0; // Reset on success
+    } catch (e) {
+      debugPrint('Failed to subscribe to BLE event channel: $e');
+      // Retry with exponential backoff
+      if (_eventChannelRetryCount < _maxEventChannelRetries) {
+        _eventChannelRetryCount++;
+        final delay = Duration(seconds: _eventChannelRetryCount);
+        debugPrint('Retrying event channel subscription in ${delay.inSeconds}s (attempt $_eventChannelRetryCount)');
+        Future.delayed(delay, () {
+          _subscribeToEventChannel();
+        });
+      } else {
+        debugPrint('Max retry attempts reached for BLE event channel');
+        _errorController.add('BLE event channel initialization failed after $_maxEventChannelRetries attempts');
+      }
+    }
+  }
+
   /// Reinitialize event channel after app resume (handles stale channel)
   void reinitializeEventChannel() {
     debugPrint('Reinitializing BLE event channel');
     _eventChannelSubscription?.cancel();
-    _eventChannelSubscription = _eventChannel.receiveBroadcastStream().listen(
-      _handleNativeEvent,
-      onError: (dynamic error) {
-        _errorController.add(error.toString());
-      },
-      onDone: () {
-        debugPrint('BLE event channel closed');
-      },
-    );
+    _eventChannelSubscription = null;
+    _eventChannelRetryCount = 0;
+
+    // Use the same subscription logic with retry
+    _subscribeToEventChannel();
   }
 
   Future<void> _initNotifications() async {
@@ -496,13 +533,19 @@ class BLEService {
   }
 
   /// Start broadcasting own SOS
-  /// Start broadcasting own SOS
   Future<bool> startBroadcasting({
     required double latitude,
     required double longitude,
     required SOSStatus status,
   }) async {
     if (_userId == null) await _loadUserData();
+
+    // Verify user ID was loaded successfully
+    if (_userId == null) {
+      debugPrint('ERROR: Failed to load user ID for broadcasting');
+      _errorController.add('Failed to load user ID');
+      return false;
+    }
 
     // Check BLE 5 support
     final hasBle5 = await supportsBle5();
@@ -566,6 +609,13 @@ class BLEService {
     required SOSStatus status,
   }) async {
     if (_userId == null) await _loadUserData();
+
+    // Verify user ID was loaded successfully
+    if (_userId == null) {
+      debugPrint('ERROR: Failed to load user ID for target message');
+      _errorController.add('Failed to load user ID');
+      return false;
+    }
 
     _sequence = await _packetStore.incrementSequence();
 

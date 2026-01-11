@@ -142,7 +142,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     await OnboardingService.instance.completeOnboarding();
     if (mounted) {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(builder: (_) => HomeScreen(key: homeScreenKey)),
       );
     }
   }

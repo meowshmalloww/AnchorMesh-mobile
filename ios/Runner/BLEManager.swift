@@ -48,9 +48,15 @@ class BLEManager: NSObject {
     private var isSetup = false
     private var lifecycleObserversSetup = false
     
-    // Track last connection time for throttling
-    private var deviceConnectionTimestamps: [UUID: Date] = [:]
-    private let connectionThrottleInterval: TimeInterval = 5.0 // 5 seconds
+    // Track last packet reception time per device to avoid duplicates
+    private var lastPacketTimestamps: [UUID: Date] = [:]
+    private let packetDedupeInterval: TimeInterval = 2.0 // 2 seconds - allows for reliable mesh relay
+
+    // Track recently seen packet hashes to dedupe
+    private var recentPacketHashes: Set<Int> = []
+
+    // Track packet content hashes with timestamps for smarter deduplication
+    private var packetHashTimestamps: [Int: Date] = [:]
     
     // MARK: - Singleton
     
@@ -145,6 +151,11 @@ class BLEManager: NSObject {
         discoveredPeripherals.removeAll()
         connectedPeripherals.removeAll()
         scannedUUIDs.removeAll()
+
+        // Clear packet deduplication caches
+        lastPacketTimestamps.removeAll()
+        recentPacketHashes.removeAll()
+        packetHashTimestamps.removeAll()
 
         // Reset BLE operation flags
         isScanning = false
@@ -280,17 +291,27 @@ class BLEManager: NSObject {
     }
     
     // MARK: - Flutter Channel Setup
-    
-    func setEventSink(_ sink: FlutterEventSink?) {
-        self.eventSink = sink
-    }
-    
-    private func sendEvent(type: String, data: Any?) {
-        // Safety: Check if sink is still valid before sending
-        guard let sink = eventSink else { return }
 
+    func setEventSink(_ sink: FlutterEventSink?) {
+        DispatchQueue.main.async { [weak self] in
+            self?.eventSink = sink
+            if sink != nil {
+                print("BLEManager: Event sink set")
+            } else {
+                print("BLEManager: Event sink cleared")
+            }
+        }
+    }
+
+    private func sendEvent(type: String, data: Any?) {
         // Dispatch on main thread to avoid threading issues
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            // Safety: Check if sink is still valid before sending
+            guard let sink = self?.eventSink else {
+                print("BLEManager: No event sink available for event type: \(type)")
+                return
+            }
+
             sink(["type": type, "data": data as Any])
         }
     }
@@ -300,45 +321,95 @@ class BLEManager: NSObject {
     }
     
     // MARK: - Broadcasting (Peripheral Mode)
-    
+
     func startBroadcasting(packetData: Data) -> Bool {
-        guard let peripheralManager = peripheralManager,
-              peripheralManager.state == .poweredOn else {
-            sendEvent(type: "error", data: "Bluetooth not available")
+        guard let peripheralManager = peripheralManager else {
+            sendEvent(type: "error", data: "Bluetooth not initialized")
             return false
         }
-        
+
+        // Check if Bluetooth is powered on
+        guard peripheralManager.state == .poweredOn else {
+            print("Bluetooth not powered on (state: \(peripheralManager.state.rawValue)), will retry when ready")
+            currentPacketData = packetData // Store for retry
+            sendEvent(type: "error", data: "Bluetooth not available. Please enable Bluetooth.")
+            return false
+        }
+
+        // Store packet data for characteristic reads
         currentPacketData = packetData
-        
-        // Create characteristic with SOS data
+
+        // If already broadcasting, restart advertising with new packet data
+        if isBroadcasting {
+            // Stop current advertising
+            peripheralManager.stopAdvertising()
+
+            // Restart with new data embedded in advertising payload
+            startAdvertisingWithPacketData(packetData)
+
+            // Also update characteristic for connection-based fallback
+            if let characteristic = sosCharacteristic {
+                peripheralManager.updateValue(packetData, for: characteristic, onSubscribedCentrals: nil)
+            }
+            return true
+        }
+
+        // First time setup - create characteristic and service
         sosCharacteristic = CBMutableCharacteristic(
             type: BLEManager.characteristicUUID,
             properties: [.read, .notify],
             value: nil,
             permissions: [.readable]
         )
-        
-        // Create service
+
+        // Create service with nil-safe characteristic
+        guard let characteristic = sosCharacteristic else {
+            print("ERROR: Failed to create BLE characteristic")
+            sendEvent(type: "error", data: "Failed to create BLE characteristic")
+            return false
+        }
+
         let service = CBMutableService(type: BLEManager.serviceUUID, primary: true)
-        service.characteristics = [sosCharacteristic!]
-        
+        service.characteristics = [characteristic]
+
+        print("Adding BLE service for SOS broadcast...")
+
+        // Add service - advertising will start in didAdd delegate callback
         peripheralManager.add(service)
-        
-        // Start advertising
-        peripheralManager.startAdvertising([
-            CBAdvertisementDataServiceUUIDsKey: [BLEManager.serviceUUID],
-            CBAdvertisementDataLocalNameKey: "SOS_MESH"
-        ])
-        
-        isBroadcasting = true
-        updateCurrentState()
-        
+
         // Keep screen on (foreground only)
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = true
         }
-        
+
         return true
+    }
+
+    /// Start advertising with packet data stored in characteristic
+    /// NOTE: iOS does NOT support embedding arbitrary data in advertisement payloads.
+    /// CBAdvertisementDataServiceDataKey is READ-ONLY (populated when receiving, not sending).
+    /// Scanners must connect and read the characteristic to get the packet data.
+    private func startAdvertisingWithPacketData(_ packetData: Data) {
+        guard let peripheralManager = peripheralManager else { return }
+
+        // iOS advertising is limited - we can only advertise:
+        // 1. Service UUIDs (so scanners can find us)
+        // 2. Local name (short identifier)
+        // Scanners must CONNECT to read the actual SOS packet from characteristic
+        let advertisingData: [String: Any] = [
+            CBAdvertisementDataServiceUUIDsKey: [BLEManager.serviceUUID],
+            CBAdvertisementDataLocalNameKey: "SOS"
+        ]
+
+        // Update the characteristic value so connected devices can read it
+        if let characteristic = sosCharacteristic {
+            characteristic.value = packetData
+            // Notify any subscribed centrals of the new value
+            peripheralManager.updateValue(packetData, for: characteristic, onSubscribedCentrals: nil)
+        }
+
+        peripheralManager.startAdvertising(advertisingData)
+        print("Started advertising SOS service (scanners must connect to read \(packetData.count) byte packet)")
     }
     
     func stopBroadcasting() -> Bool {
@@ -356,7 +427,7 @@ class BLEManager: NSObject {
     }
     
     // MARK: - Scanning (Central Mode)
-    
+
     func startScanning() -> Bool {
         guard let centralManager = centralManager,
               centralManager.state == .poweredOn else {
@@ -364,17 +435,18 @@ class BLEManager: NSObject {
             return false
         }
 
-        // Always scan for our SOS service UUID - this works in background mode too
-        // iOS requires specific service UUIDs for background scanning (no wildcard)
+        // CRITICAL: allowDuplicates MUST be true for mesh networking
+        // This allows receiving updated packets from the same device
+        // Without this, only the first advertisement from each device is received!
         centralManager.scanForPeripherals(
             withServices: [BLEManager.serviceUUID],
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
 
         isScanning = true
         updateCurrentState()
 
-        print("BLE scanning started for SOS service")
+        print("BLE scanning started for SOS service (allowDuplicates: true)")
         return true
     }
     
@@ -435,40 +507,41 @@ class BLEManager: NSObject {
     /// Test notification by simulating an SOS packet reception
     func testNotification() {
         // Create a fake SOS packet (25 bytes)
+        // IMPORTANT: Uses BIG-ENDIAN encoding to match how showSOSNotification parses the data
         var testPacket = Data(count: 25)
 
         // Header: 0xFFFF
         testPacket[0] = 0xFF
         testPacket[1] = 0xFF
 
-        // User ID: 0x12345678
+        // User ID: 0x12345678 (little-endian as per packet spec)
         testPacket[2] = 0x78
         testPacket[3] = 0x56
         testPacket[4] = 0x34
         testPacket[5] = 0x12
 
-        // Sequence: 1
+        // Sequence: 1 (little-endian)
         testPacket[6] = 0x01
         testPacket[7] = 0x00
 
-        // Latitude: 37.7749 * 10^7 = 377749000 (San Francisco)
+        // Latitude: 37.7749 * 10^7 = 377749000 (San Francisco) - BIG-ENDIAN
         let lat: Int32 = 377749000
-        testPacket[8] = UInt8(lat & 0xFF)
-        testPacket[9] = UInt8((lat >> 8) & 0xFF)
-        testPacket[10] = UInt8((lat >> 16) & 0xFF)
-        testPacket[11] = UInt8((lat >> 24) & 0xFF)
+        testPacket[8] = UInt8((lat >> 24) & 0xFF)
+        testPacket[9] = UInt8((lat >> 16) & 0xFF)
+        testPacket[10] = UInt8((lat >> 8) & 0xFF)
+        testPacket[11] = UInt8(lat & 0xFF)
 
-        // Longitude: -122.4194 * 10^7 = -1224194000
+        // Longitude: -122.4194 * 10^7 = -1224194000 - BIG-ENDIAN
         let lon: Int32 = -1224194000
-        testPacket[12] = UInt8(truncatingIfNeeded: lon & 0xFF)
-        testPacket[13] = UInt8(truncatingIfNeeded: (lon >> 8) & 0xFF)
-        testPacket[14] = UInt8(truncatingIfNeeded: (lon >> 16) & 0xFF)
-        testPacket[15] = UInt8(truncatingIfNeeded: (lon >> 24) & 0xFF)
+        testPacket[12] = UInt8(truncatingIfNeeded: (lon >> 24) & 0xFF)
+        testPacket[13] = UInt8(truncatingIfNeeded: (lon >> 16) & 0xFF)
+        testPacket[14] = UInt8(truncatingIfNeeded: (lon >> 8) & 0xFF)
+        testPacket[15] = UInt8(truncatingIfNeeded: lon & 0xFF)
 
         // Status: SOS (0x01)
         testPacket[16] = BLEManager.STATUS_SOS
 
-        // Timestamp: current time
+        // Timestamp: current time (little-endian)
         let timestamp = Int32(Date().timeIntervalSince1970)
         testPacket[17] = UInt8(timestamp & 0xFF)
         testPacket[18] = UInt8((timestamp >> 8) & 0xFF)
@@ -482,6 +555,10 @@ class BLEManager: NSObject {
         testPacket[24] = 0x00
 
         print("Testing notification with simulated SOS packet")
+
+        // Send to Flutter as well
+        sendEvent(type: "packetReceived", data: Array(testPacket))
+
         showSOSNotification(packetData: testPacket)
     }
 
@@ -525,23 +602,58 @@ extension BLEManager: CBCentralManagerDelegate {
     
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        
-        // Save UUID for background scanning
-        if let serviceUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
-            serviceUUIDs.forEach { scannedUUIDs.insert($0) }
+
+        // iOS-to-iOS BLE: Service data in advertisements is NOT supported for sending
+        // We MUST connect to the peripheral to read the SOS packet from its characteristic
+
+        // Check if this is an Android device that might include service data
+        // (Android CAN embed data in advertisements, iOS cannot)
+        if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data],
+           let packetData = serviceData[BLEManager.serviceUUID] {
+
+            // Dedupe: Check if we've recently processed this exact packet
+            let packetHash = packetData.hashValue
+            let now = Date()
+
+            // Clean up old hash timestamps (older than 5 seconds)
+            packetHashTimestamps = packetHashTimestamps.filter { now.timeIntervalSince($0.value) < 5.0 }
+
+            if let lastSeen = packetHashTimestamps[packetHash],
+               now.timeIntervalSince(lastSeen) < packetDedupeInterval {
+                return // Skip duplicate packet within window
+            }
+
+            // Record this packet hash with timestamp
+            packetHashTimestamps[packetHash] = now
+
+            print("Received SOS packet from Android advertisement (\(packetData.count) bytes)")
+
+            // Send to Flutter immediately
+            sendEvent(type: "packetReceived", data: Array(packetData))
+
+            // Show native notification
+            showSOSNotification(packetData: packetData)
+
+            return // Got data from Android advertisement
         }
-        
+
+        // For iOS devices (or any device without service data in advertisement):
+        // Must connect to read the characteristic
+
+        // Dedupe by device + time to avoid spamming connections
         let now = Date()
-        let lastTime = deviceConnectionTimestamps[peripheral.identifier] ?? Date.distantPast
-        
-        // Connect if never connected OR if throttle time passed
-        // AND not currently connected
-        if now.timeIntervalSince(lastTime) > connectionThrottleInterval {
+        let lastTime = lastPacketTimestamps[peripheral.identifier] ?? Date.distantPast
+
+        if now.timeIntervalSince(lastTime) > packetDedupeInterval {
             if !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
-                deviceConnectionTimestamps[peripheral.identifier] = now
-                
-                // Add to connected list prevents double-triggering before callback
-                // But we use connectedPeripherals for actual connections
+                // Store peripheral reference to prevent deallocation
+                if !discoveredPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
+                    discoveredPeripherals.append(peripheral)
+                }
+
+                lastPacketTimestamps[peripheral.identifier] = now
+
+                print("Discovered SOS beacon, connecting to read packet...")
                 central.connect(peripheral, options: nil)
             }
         }
@@ -616,11 +728,64 @@ extension BLEManager: CBPeripheralDelegate {
 // MARK: - CBPeripheralManagerDelegate
 
 extension BLEManager: CBPeripheralManagerDelegate {
-    
+
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
-        // State handled by centralManagerDidUpdateState
+        switch peripheral.state {
+        case .poweredOn:
+            print("Peripheral manager powered on")
+            // If we were trying to broadcast, retry now
+            if let data = currentPacketData, !isBroadcasting {
+                _ = startBroadcasting(packetData: data)
+            }
+        case .poweredOff:
+            print("Peripheral manager powered off")
+            sendEvent(type: "error", data: "Bluetooth is turned off")
+        case .unauthorized:
+            print("Peripheral manager unauthorized")
+            sendEvent(type: "error", data: "Bluetooth permission denied")
+        case .unsupported:
+            print("Peripheral manager unsupported")
+            sendEvent(type: "error", data: "Bluetooth LE not supported")
+        default:
+            break
+        }
     }
-    
+
+    func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+        if let error = error {
+            print("Failed to add service: \(error.localizedDescription)")
+            sendEvent(type: "error", data: "Failed to add BLE service: \(error.localizedDescription)")
+            return
+        }
+
+        print("Service added successfully, starting advertising with packet data...")
+
+        // Start advertising with packet data embedded
+        if let packetData = currentPacketData {
+            startAdvertisingWithPacketData(packetData)
+        } else {
+            // Fallback: advertise without packet data (connection-based fallback)
+            peripheral.startAdvertising([
+                CBAdvertisementDataServiceUUIDsKey: [BLEManager.serviceUUID],
+                CBAdvertisementDataLocalNameKey: "SOS"
+            ])
+        }
+    }
+
+    func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
+        if let error = error {
+            print("Failed to start advertising: \(error.localizedDescription)")
+            sendEvent(type: "error", data: "Failed to start BLE advertising: \(error.localizedDescription)")
+            isBroadcasting = false
+            updateCurrentState()
+            return
+        }
+
+        print("BLE advertising started successfully")
+        isBroadcasting = true
+        updateCurrentState()
+    }
+
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
         guard request.characteristic.uuid == BLEManager.characteristicUUID,
               let data = currentPacketData else {

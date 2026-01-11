@@ -64,4 +64,20 @@ enum SOSStatus {
         return Icons.local_drink;
     }
   }
+
+  /// Get emoji for notifications
+  String get emoji {
+    switch (this) {
+      case SOSStatus.safe:
+        return '✅';
+      case SOSStatus.sos:
+        return '🆘';
+      case SOSStatus.medical:
+        return '🏥';
+      case SOSStatus.trapped:
+        return '🚨';
+      case SOSStatus.supplies:
+        return '📦';
+    }
+  }
 }

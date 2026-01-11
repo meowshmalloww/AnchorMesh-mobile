@@ -2,7 +2,7 @@
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter_compass/flutter_compass.dart';
+import 'package:compassx/compassx.dart';
 
 import '../widgets/offline/strobe_control.dart';
 import '../widgets/offline/ultrasonic_control.dart';
@@ -30,7 +30,7 @@ class _OfflineUtilityPageState extends State<OfflineUtilityPage>
   }
 
   void _initCompass() {
-    FlutterCompass.events?.listen((event) {
+    CompassX.events.listen((event) {
       if (mounted) {
         setState(() {
           _heading = event.heading;

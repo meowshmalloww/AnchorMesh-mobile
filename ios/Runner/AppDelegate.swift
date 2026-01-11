@@ -10,6 +10,8 @@ import UserNotifications
     private var platformChannel: FlutterMethodChannel?
     private var isChannelsSetup = false
     private var lowPowerModeObserver: NSObjectProtocol?
+    private var channelSetupRetryCount = 0
+    private let maxChannelSetupRetries = 10
 
     override func application(
         _ application: UIApplication,
@@ -17,6 +19,7 @@ import UserNotifications
     ) -> Bool {
         // Reset state for fresh app launch (handles reopen after force quit)
         isChannelsSetup = false
+        channelSetupRetryCount = 0
         BLEManager.shared.reset()
 
         GeneratedPluginRegistrant.register(with: self)
@@ -59,17 +62,32 @@ import UserNotifications
 
     private func setupChannelsIfNeeded() {
         guard !isChannelsSetup else { return }
-        guard let controller = window?.rootViewController as? FlutterViewController else {
-            // Retry after a short delay if window isn't ready
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+
+        // Check if we've exceeded max retries
+        guard channelSetupRetryCount < maxChannelSetupRetries else {
+            print("ERROR: Failed to setup Flutter channels after \(maxChannelSetupRetries) attempts")
+            return
+        }
+
+        // Ensure window and root controller are ready
+        guard let window = self.window,
+              let controller = window.rootViewController as? FlutterViewController else {
+            // Retry with increasing delay (100ms, 200ms, 300ms, etc.)
+            channelSetupRetryCount += 1
+            let delay = 0.1 * Double(channelSetupRetryCount)
+            print("Flutter controller not ready, retrying in \(delay)s (attempt \(channelSetupRetryCount))")
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.setupChannelsIfNeeded()
             }
             return
         }
 
+        // Setup channels
         setupBLEChannels(controller: controller)
         setupPlatformChannel(controller: controller)
         isChannelsSetup = true
+        channelSetupRetryCount = 0
+        print("Flutter channels setup successfully")
     }
 
     private func setupPlatformChannel(controller: FlutterViewController) {
@@ -186,8 +204,11 @@ import UserNotifications
 
         bleEventChannel?.setStreamHandler(BLEEventStreamHandler())
 
-        // Initialize BLE Manager
-        BLEManager.shared.setup()
+        // Initialize BLE Manager with delay to ensure everything is ready
+        DispatchQueue.main.async {
+            BLEManager.shared.setup()
+            print("BLE Manager setup completed")
+        }
     }
 
     private func handleBLEMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -270,11 +291,13 @@ import UserNotifications
 
 class BLEEventStreamHandler: NSObject, FlutterStreamHandler {
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        print("BLE Event Stream: onListen called")
         BLEManager.shared.setEventSink(events)
         return nil
     }
 
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        print("BLE Event Stream: onCancel called")
         BLEManager.shared.setEventSink(nil)
         return nil
     }

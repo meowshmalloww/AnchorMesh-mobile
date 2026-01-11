@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_compass/flutter_compass.dart';
+import 'package:compassx/compassx.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/ble_service.dart';
 import '../utils/rssi_calculator.dart';
@@ -44,7 +44,7 @@ class _SignalLocatorPageState extends State<SignalLocatorPage>
   late AnimationController _radarController;
 
   // Subscriptions
-  StreamSubscription<CompassEvent>? _compassSub;
+  StreamSubscription<CompassXEvent>? _compassSub;
   StreamSubscription<SOSPacket>? _packetSub;
   Timer? _scanTimer;
 
@@ -69,18 +69,15 @@ class _SignalLocatorPageState extends State<SignalLocatorPage>
   }
 
   void _setupCompass() {
-    _compassSub = FlutterCompass.events?.listen((event) {
+    _compassSub = CompassX.events.listen((event) {
       if (mounted) {
         // Optimization: Update notifier instead of setState
         _headingNotifier.value = event.heading;
 
         // If calibrating, record RSSI at this heading
-        // Access value directly
-        if (_isCalibrating &&
-            _headingNotifier.value != null &&
-            _selectedDeviceId != null) {
+        if (_isCalibrating && _selectedDeviceId != null) {
           _directionFinder.addReading(
-            _headingNotifier.value!,
+            event.heading,
             _currentRSSI.round(),
           );
         }

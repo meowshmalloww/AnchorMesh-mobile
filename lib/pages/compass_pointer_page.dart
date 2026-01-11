@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_compass/flutter_compass.dart';
+import 'package:compassx/compassx.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/ble_service.dart';
 import '../models/sos_packet.dart';
@@ -17,7 +17,7 @@ class _CompassPointerPageState extends State<CompassPointerPage> {
   final BLEService _bleService = BLEService.instance;
 
   // Sensors
-  StreamSubscription<CompassEvent>? _compassSub;
+  StreamSubscription<CompassXEvent>? _compassSub;
   StreamSubscription<Position>? _posSub;
   StreamSubscription<SOSPacket>? _scanSub;
 
@@ -40,8 +40,8 @@ class _CompassPointerPageState extends State<CompassPointerPage> {
   }
 
   void _initSensors() {
-    _compassSub = FlutterCompass.events?.listen((event) {
-      if (mounted) setState(() => _heading = event.heading ?? 0);
+    _compassSub = CompassX.events.listen((event) {
+      if (mounted) setState(() => _heading = event.heading);
     });
 
     final settings = const LocationSettings(

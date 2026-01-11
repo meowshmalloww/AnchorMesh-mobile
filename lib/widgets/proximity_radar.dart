@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter_compass/flutter_compass.dart';
+import 'package:compassx/compassx.dart';
 import '../services/ble_service.dart';
 import '../utils/rssi_calculator.dart';
 
@@ -34,7 +34,7 @@ class _ProximityRadarState extends State<ProximityRadar>
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
-  StreamSubscription<CompassEvent>? _compassSubscription;
+  StreamSubscription<CompassXEvent>? _compassSubscription;
 
   @override
   void initState() {
@@ -64,10 +64,10 @@ class _ProximityRadarState extends State<ProximityRadar>
     _compassSubscription?.cancel();
 
     // Listen to compass heading
-    _compassSubscription = FlutterCompass.events?.listen((event) {
-      if (!_isScanning || !mounted || event.heading == null) return;
+    _compassSubscription = CompassX.events.listen((event) {
+      if (!_isScanning || !mounted) return;
 
-      setState(() => _currentHeading = event.heading!);
+      setState(() => _currentHeading = event.heading);
 
       // Simulate receiving RSSI (in real app, this comes from BLE)
       // For now, use stored values from BLE service
