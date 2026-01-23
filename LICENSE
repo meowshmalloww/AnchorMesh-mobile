@@ -1,20 +1,107 @@
-MITIGATION LICENSE - EVALUATION ONLY
+PROPRIETARY SOFTWARE LICENSE - ALL RIGHTS RESERVED
 
 Copyright (c) 2026 AnchorMesh Team. All Rights Reserved.
 
-NOTICE TO ALL USERS:
+STRICT NOTICE: UNAUTHORIZED USE PROHIBITED
 
-This software is the intellectual property of the AnchorMesh Team. It is provided specifically for the purpose of HACKATHON EVALUATION and JUDGING only.
+This software, including all source code, documentation, assets, designs, algorithms,
+and any associated materials (collectively, "the Software"), is the exclusive
+intellectual property of the AnchorMesh Team.
 
-1. PERMISSIONS
-   - You may view, compile, and run this code on personal devices for the sole purpose of evaluating its functionality and code quality.
-   - You may demonstrate this software to others for the purpose of judging or feedback.
+================================================================================
+                              NO LICENSE GRANTED
+================================================================================
 
-2. RESTRICTIONS
-   - You may NOT redistribute, sell, sub-license, or rent this software or any part of its source code.
-   - You may NOT use this code for any commercial purpose.
-   - You may NOT modify, fork, or create derivative works from this code without express written permission from the copyright holders.
-   - You may NOT remove this license notice from any copies of the software.
+NO rights, licenses, or permissions of any kind are granted to any person or entity
+under this notice, whether by implication, estoppel, or otherwise, EXCEPT as
+explicitly stated below for hackathon judging purposes only.
 
-3. NO WARRANTY
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY.
+================================================================================
+                         LIMITED EVALUATION PERMISSION
+================================================================================
+
+SOLELY for the purpose of evaluating this Software as part of an official hackathon
+judging process, authorized judges may:
+   - View the source code
+   - Compile and run the Software for demonstration purposes
+
+This limited permission terminates immediately upon conclusion of the judging process.
+
+================================================================================
+                            ABSOLUTE PROHIBITIONS
+================================================================================
+
+Without prior WRITTEN authorization from ALL members of the AnchorMesh Team,
+NO person or entity may:
+
+   1. COPY, reproduce, or duplicate this Software in whole or in part
+   2. MODIFY, adapt, translate, or create derivative works
+   3. DISTRIBUTE, publish, transmit, or share this Software by any means
+   4. FORK, clone, or mirror this repository
+   5. USE any portion of this code in any other project, hackathon, or submission
+   6. SUBMIT this Software or any derivative to any competition, hackathon, or contest
+   7. SELL, license, sublicense, rent, lease, or commercially exploit this Software
+   8. REVERSE ENGINEER, decompile, or disassemble this Software
+   9. REMOVE, alter, or obscure any copyright, trademark, or proprietary notices
+  10. CLAIM authorship or ownership of this Software or any part thereof
+  11. USE this Software for training machine learning or AI models
+  12. STORE or cache this Software on any server, cloud service, or third-party platform
+      (except as required for the original hackathon submission)
+
+================================================================================
+                           INTELLECTUAL PROPERTY
+================================================================================
+
+All intellectual property rights, including but not limited to copyrights, patents,
+trade secrets, and trademarks embodied in or associated with this Software are and
+shall remain the sole property of the AnchorMesh Team.
+
+This Software contains TRADE SECRETS and CONFIDENTIAL INFORMATION. Unauthorized
+disclosure or use may result in irreparable harm.
+
+================================================================================
+                          ENFORCEMENT & REMEDIES
+================================================================================
+
+Any violation of this license constitutes:
+   - Copyright infringement under applicable national and international law
+   - Breach of confidence and misappropriation of trade secrets
+   - Potential violation of computer fraud and unauthorized access laws
+
+The AnchorMesh Team reserves the right to pursue ALL available legal remedies,
+including but not limited to:
+   - Injunctive relief
+   - Actual and statutory damages
+   - Attorney's fees and litigation costs
+   - Criminal referral where applicable
+
+================================================================================
+                              NO WARRANTY
+================================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+THE ANCHORMESH TEAM DISCLAIMS ALL WARRANTIES INCLUDING MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS BE
+LIABLE FOR ANY DAMAGES ARISING FROM THE USE OR INABILITY TO USE THIS SOFTWARE.
+
+================================================================================
+                            SEVERABILITY
+================================================================================
+
+If any provision of this license is held invalid or unenforceable, such provision
+shall be modified to the minimum extent necessary to make it valid and enforceable,
+and the remaining provisions shall continue in full force and effect.
+
+================================================================================
+                           GOVERNING LAW
+================================================================================
+
+This license shall be governed by and construed in accordance with applicable
+copyright and intellectual property laws. Any disputes shall be resolved in the
+courts of competent jurisdiction.
+
+================================================================================
+
+FOR PERMISSION REQUESTS, CONTACT THE ANCHORMESH TEAM.
+
+VIOLATORS WILL BE PROSECUTED TO THE FULLEST EXTENT OF THE LAW.
